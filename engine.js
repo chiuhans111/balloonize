@@ -30,9 +30,7 @@ export class BalloonizeEngine {
         this.initBuffers();
         this.initEvents();
 
-        this.loadImage(imageSource).then(() => {
-            this.startTrimLoop();
-        });
+        this.setImage(imageSource).catch(err => console.error("Initial load failed:", err));
     }
 
     compileShader(type, source) {
@@ -118,19 +116,30 @@ export class BalloonizeEngine {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     }
 
-    loadImage(src) {
-        return new Promise((resolve) => {
+    setImage(source) {
+        return new Promise((resolve, reject) => {
+            let src;
+            let isObjectURL = false;
+            if (source instanceof File || source instanceof Blob) {
+                src = URL.createObjectURL(source);
+                isObjectURL = true;
+            } else if (typeof source === 'string') {
+                src = source;
+            } else {
+                reject(new Error("Unsupported source type"));
+                return;
+            }
+
             const img = new Image();
             img.crossOrigin = "Anonymous";
             img.onload = () => {
                 const gl = this.gl;
                 gl.bindTexture(gl.TEXTURE_2D, this.imageTex);
-                // Flip Y for texture so it matches standard coordinates if needed
                 gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
                 gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 
-                // Initialize sim state A with a bounding box mask
+                // Initialize simulation state A with a bounding box mask
                 const initData = new Float32Array(this.simRes * this.simRes * 4);
                 for(let i = 0; i < this.simRes * this.simRes; i++) {
                     const x = i % this.simRes;
@@ -145,12 +154,25 @@ export class BalloonizeEngine {
                     initData[i*4 + 0] = 0; // u_t
                     initData[i*4 + 1] = 0; // u_t-1
                     initData[i*4 + 2] = mask; // Mask
-                    initData[i*4 + 3] = mask; // SDF (initialize to 1.0 inside mask)
+                    initData[i*4 + 3] = mask; // SDF
                 }
                 gl.bindTexture(gl.TEXTURE_2D, this.simA);
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, this.simRes, this.simRes, 0, gl.RGBA, gl.FLOAT, initData);
 
+                if (isObjectURL) {
+                    URL.revokeObjectURL(src);
+                }
+
+                // Run trim simulation and wake render loop
+                this.startTrimLoop();
+                this.wake();
                 resolve();
+            };
+            img.onerror = (err) => {
+                if (isObjectURL) {
+                    URL.revokeObjectURL(src);
+                }
+                reject(err);
             };
             img.src = src;
         });
@@ -158,7 +180,7 @@ export class BalloonizeEngine {
 
     initEvents() {
         this.physicsParams = { tension: 0.7, damping: 0.67, diffusion: 0.15 };
-        this.lightingParams = { env: 1.4, az: -45, el: 39, specCore: 10.0, specGlow: 3.2, rim: 0.2 };
+        this.lightingParams = { env: 1.4, az: -45, el: 56, specCore: 6.7, specGlow: 1.0, rim: 0.5 };
         
         const slTension = document.getElementById('slider-tension');
         const slDamping = document.getElementById('slider-damping');
@@ -381,9 +403,9 @@ export class BalloonizeEngine {
             u_screenTexelSize: [1.0 / this.canvas.width, 1.0 / this.canvas.height],
             u_envIntensity: this.lightingParams ? this.lightingParams.env : 1.4,
             u_lightDir: lightDir,
-            u_specCore: this.lightingParams ? this.lightingParams.specCore : 10.0,
-            u_specGlow: this.lightingParams ? this.lightingParams.specGlow : 3.2,
-            u_rim: this.lightingParams ? this.lightingParams.rim : 0.2,
+            u_specCore: this.lightingParams ? this.lightingParams.specCore : 6.7,
+            u_specGlow: this.lightingParams ? this.lightingParams.specGlow : 1.0,
+            u_rim: this.lightingParams ? this.lightingParams.rim : 0.5,
             u_diffusion: this.physicsParams ? this.physicsParams.diffusion : 0.15
         });
     }

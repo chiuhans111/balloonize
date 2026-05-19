@@ -77,6 +77,10 @@
         <div class="instructions">Click and drag over the shape to interact with the wave simulation.</div>
         
         <div class="controls">
+            <!-- Image Uploader -->
+            <button id="btn-upload" style="background:#ff4b8b; color:#fff; border:none; padding:8px 12px; border-radius:4px; font-weight:bold; cursor:pointer; width:100%; margin-bottom:12px; transition: background 0.2s;" onmouseover="this.style.background='#e03e75'" onmouseout="this.style.background='#ff4b8b'">Upload Image (Or Paste / Drag)</button>
+            <input type="file" id="file-input" accept="image/*" style="display:none;">
+
             <!-- Physics Controls -->
             <div style="font-size:14px; font-weight:bold; margin-bottom:-4px;">Physics</div>
             <div class="control-group">
@@ -103,20 +107,20 @@
                 <input type="range" id="slider-azimuth" min="-180" max="180" step="1" value="-45">
             </div>
             <div class="control-group">
-                <label><span>Light Elevation</span> <span id="val-elevation">39</span></label>
-                <input type="range" id="slider-elevation" min="-90" max="90" step="1" value="39">
+                <label><span>Light Elevation</span> <span id="val-elevation">56</span></label>
+                <input type="range" id="slider-elevation" min="-90" max="90" step="1" value="56">
             </div>
             <div class="control-group">
-                <label><span>Specular Core</span> <span id="val-spec-core">10.0</span></label>
-                <input type="range" id="slider-spec-core" min="0.0" max="10.0" step="0.1" value="10.0">
+                <label><span>Specular Core</span> <span id="val-spec-core">6.7</span></label>
+                <input type="range" id="slider-spec-core" min="0.0" max="10.0" step="0.1" value="6.7">
             </div>
             <div class="control-group">
-                <label><span>Specular Glow</span> <span id="val-spec-glow">3.2</span></label>
-                <input type="range" id="slider-spec-glow" min="0.0" max="10.0" step="0.1" value="3.2">
+                <label><span>Specular Glow</span> <span id="val-spec-glow">1.0</span></label>
+                <input type="range" id="slider-spec-glow" min="0.0" max="10.0" step="0.1" value="1.0">
             </div>
             <div class="control-group">
-                <label><span>Rim Light</span> <span id="val-rim">0.2</span></label>
-                <input type="range" id="slider-rim" min="0.0" max="2.0" step="0.1" value="0.2">
+                <label><span>Rim Light</span> <span id="val-rim">0.5</span></label>
+                <input type="range" id="slider-rim" min="0.0" max="2.0" step="0.1" value="0.5">
             </div>
         </div>
     </div>
@@ -159,6 +163,41 @@
             
             // Initialize the modular engine with this canvas and the generated image
             const engine = new BalloonizeEngine(canvas, dataUrl);
+
+            // File selection
+            const btnUpload = document.getElementById('btn-upload');
+            const fileInput = document.getElementById('file-input');
+            btnUpload.addEventListener('click', () => fileInput.click());
+            fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    engine.setImage(file).catch(err => console.error("Error setting image from file input:", err));
+                }
+            });
+
+            // Drag and drop
+            window.addEventListener('dragover', (e) => {
+                e.preventDefault();
+            });
+            window.addEventListener('drop', (e) => {
+                e.preventDefault();
+                const file = e.dataTransfer.files[0];
+                if (file && file.type.startsWith('image/')) {
+                    engine.setImage(file).catch(err => console.error("Error setting image from drag-drop:", err));
+                }
+            });
+
+            // Clipboard paste
+            window.addEventListener('paste', (e) => {
+                const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+                for (let i = 0; i < items.length; i++) {
+                    if (items[i].type.indexOf('image') !== -1) {
+                        const file = items[i].getAsFile();
+                        engine.setImage(file).catch(err => console.error("Error setting image from clipboard paste:", err));
+                        break;
+                    }
+                }
+            });
         });
     </script>
 </body>

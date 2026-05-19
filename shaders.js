@@ -359,9 +359,9 @@ void main() {
     float smoothedSDF = smoothstep(0.0, 0.06, sharpSDF); // Keep edge sharp
     float finalAlphaMask = max(highResAlpha, smoothedSDF);
 
-    vec3 bgColor = vec3(0.04, 0.03, 0.04); 
+    vec3 bgColor = texture(u_imageTexture, v_uv).rgb; 
     float shadowIntensity = smoothstep(0.0, 0.12, length(bleedOffset)) * mask;
-    bgColor = mix(bgColor, vec3(0.0), shadowIntensity * 0.95);
+    bgColor = mix(bgColor, vec3(0.0), shadowIntensity * 0.45); // Softened shadow multiplication on original background
     
     fragColor = vec4(mix(bgColor, color, finalAlphaMask), 1.0);
 }
