@@ -38,9 +38,9 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 24px;
+            gap: 20px;
             width: 100%;
-            max-width: 440px;
+            max-width: 400px;
             padding: 24px;
             box-sizing: border-box;
         }
@@ -81,13 +81,18 @@
 
         .canvas-wrapper {
             position: relative;
-            width: 280px;
-            height: 280px;
+            width: 360px;
+            height: 360px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
 
         canvas {
-            width: 100%;
-            height: 100%;
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
             background: transparent;
             border-radius: 36px;
             box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6), 
@@ -154,30 +159,31 @@
 
         .toggle-btn {
             background: transparent;
-            border: 1px solid var(--panel-border);
+            border: none;
             color: var(--text-muted);
             font-family: var(--font-clean);
-            font-size: 13px;
+            font-size: 11px;
             font-weight: 500;
-            padding: 10px 16px;
-            border-radius: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            padding: 6px 12px;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            gap: 8px;
-            transition: all 0.2s ease;
-            width: 100%;
+            gap: 6px;
+            transition: opacity 0.2s ease;
+            width: auto;
+            margin: 0 auto;
+            opacity: 0.5;
         }
 
         .toggle-btn:hover {
-            color: var(--text-color);
-            background: var(--panel-bg);
-            border-color: rgba(255, 255, 255, 0.15);
+            opacity: 0.9;
         }
 
         .toggle-btn .arrow {
-            font-size: 12px;
+            font-size: 9px;
             transition: transform 0.3s ease;
         }
 
@@ -204,7 +210,7 @@
 
         .settings-panel.open {
             padding: 18px;
-            max-height: 480px;
+            max-height: 580px;
             opacity: 1;
         }
 
@@ -295,13 +301,14 @@
         </div>
 
         <!-- Image Upload -->
-        <div class="upload-section">
+        <div class="upload-section" style="margin-top: 10px; width: 100%;">
             <button class="btn-upload" id="btn-upload">Upload Custom Image</button>
             <input type="file" id="file-input" accept="image/*" style="display:none;">
         </div>
 
+
         <!-- Collapsible Tuning Parameters -->
-        <div class="tuning-wrapper">
+        <div class="tuning-wrapper" style="width: 100%; margin-top: 16px;">
             <button class="toggle-btn" id="toggle-settings">
                 Tuning Parameters <span class="arrow">↓</span>
             </button>
@@ -389,6 +396,7 @@
             
             // Initialize the modular engine
             const engine = new BalloonizeEngine(canvas, dataUrl, {
+                inflationDepth: 1.0,
                 physicsParams: { tension: 0.70, damping: 0.67, diffusion: 0.15 },
                 lightingParams: { env: 1.4, az: -45, el: 56, specCore: 6.7, specGlow: 1.0, rim: 0.5 }
             });

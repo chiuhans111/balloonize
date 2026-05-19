@@ -17,6 +17,7 @@ uniform sampler2D u_imageTexture;
 uniform sampler2D u_simState;
 uniform vec2 u_texelSize;
 uniform float u_gradientThreshold;
+uniform float u_hasTransparency;
 
 in vec2 v_uv;
 out vec4 fragColor;
@@ -31,7 +32,10 @@ void main() {
         return;
     }
 
-    // 1. Edge Erosion Logic
+    // Fetch the actual source image pixel
+    vec4 sourceImg = texture(u_imageTexture, v_uv);
+
+    // 1. Shrink-Wrap Erosion Logic
     float l_left  = dot(texture(u_imageTexture, v_uv + vec2(-u_texelSize.x, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
     float l_right = dot(texture(u_imageTexture, v_uv + vec2( u_texelSize.x, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
     float l_up    = dot(texture(u_imageTexture, v_uv + vec2(0.0,  u_texelSize.y)).rgb, vec3(0.299, 0.587, 0.114));
@@ -44,35 +48,40 @@ void main() {
     float m_up    = texture(u_simState, v_uv + vec2(0.0,  u_texelSize.y)).b;
     float m_down  = texture(u_simState, v_uv + vec2(0.0, -u_texelSize.y)).b;
 
+    // Check if we are currently on the outer edge of the mask
     float edgeProximity = 4.0 - (m_left + m_right + m_up + m_down);
-    if (edgeProximity > 0.0 && grad < u_gradientThreshold) {
-        fragColor = vec4(0.0, 0.0, 0.0, 0.0); // Trim this pixel out
-        return;
+    
+    if (edgeProximity > 0.0) {
+        // HYBRID STOPPING CONDITION:
+        // Keep eating the mask ONLY if we haven't hit the shape boundary.
+        // For transparent images (PNGs), stop instantly when hitting opaque pixels (alpha >= 0.1).
+        // For flattened images (JPEGs), fallback to the luminance gradient threshold.
+        bool keepEating = (u_hasTransparency > 0.5) ? (sourceImg.a < 0.1) : (grad < u_gradientThreshold);
+        if (keepEating) {
+            fragColor = vec4(0.0, 0.0, 0.0, 0.0); // Trim this pixel out
+            return;
+        }
     }
 
-    // 2. TRUE EUCLIDEAN SDF GENERATION
-    // Upgraded to 8-way Chamfer distance to eliminate the "X" pyramid artifact
+    // 2. TRUE EUCLIDEAN SDF (Eikonal Equation Solver)
     if (m_left == 0.0 || m_right == 0.0 || m_up == 0.0 || m_down == 0.0) {
         currentSDF = 0.004; // Edge boundary
     } else {
-        // Orthogonal Neighbors (Distance step = 1.0)
         float s_left  = texture(u_simState, v_uv + vec2(-u_texelSize.x, 0.0)).a;
         float s_right = texture(u_simState, v_uv + vec2( u_texelSize.x, 0.0)).a;
         float s_up    = texture(u_simState, v_uv + vec2(0.0,  u_texelSize.y)).a;
         float s_down  = texture(u_simState, v_uv + vec2(0.0, -u_texelSize.y)).a;
         
-        // Diagonal Neighbors (Distance step = sqrt(2) approx 1.4142)
-        float s_ul = texture(u_simState, v_uv + vec2(-u_texelSize.x,  u_texelSize.y)).a;
-        float s_ur = texture(u_simState, v_uv + vec2( u_texelSize.x,  u_texelSize.y)).a;
-        float s_dl = texture(u_simState, v_uv + vec2(-u_texelSize.x, -u_texelSize.y)).a;
-        float s_dr = texture(u_simState, v_uv + vec2( u_texelSize.x, -u_texelSize.y)).a;
-        
         float step = 0.004;
-        float minOrtho = min(min(s_left, s_right), min(s_up, s_down)) + step;
-        float minDiag  = min(min(s_ul, s_ur), min(s_dl, s_dr)) + step * 1.41421356;
+        float h = min(s_left, s_right);
+        float v = min(s_up, s_down);
         
-        // Grow smooth cone
-        currentSDF = min(minOrtho, minDiag);
+        // Rouy-Tourin scheme for smooth, non-faceted corners
+        if (abs(h - v) < step) {
+            currentSDF = 0.5 * (h + v + sqrt(max(0.0, 2.0 * step * step - (h - v) * (h - v))));
+        } else {
+            currentSDF = min(h, v) + step;
+        }
     }
 
     fragColor = vec4(currentState.r, currentState.g, 1.0, currentSDF);
@@ -169,6 +178,8 @@ uniform float u_specCore;
 uniform float u_specGlow;
 uniform float u_rim;
 uniform float u_diffusion;
+uniform float u_inflationDepth;
+uniform float u_entranceProgress;
 
 in vec2 v_uv;
 out vec4 fragColor;
@@ -217,12 +228,12 @@ float getCreases(vec2 uv, float wave, float sdf, float mask, vec2 tangent) {
     float inwardFadeEnd = 0.12 + sin(uv.x * 15.0) * cos(uv.y * 15.0) * 0.05;
     float buckleZone = smoothstep(inwardFadeEnd, 0.0, sdf) * smoothstep(-0.02, 0.02, sdf) * mask;
     float ridge = 1.0 - pow(abs(sin(crimpPhase + wave * 2.0)), 1.5);
-    return (ridge * 2.0 - 1.0) * buckleZone * 0.065;
+    return (ridge * 2.0 - 1.0) * buckleZone * 0.065 * u_inflationDepth * u_entranceProgress;
 }
 
 float calcTotalDepth(float wave, float sdf) {
     float baseInflation = 2.5; 
-    return wave + pow(max(sdf, 0.0), 0.50) * baseInflation;
+    return (wave + pow(max(sdf, 0.0), 0.50) * baseInflation) * u_inflationDepth * u_entranceProgress;
 }
 
 float calcSeamDepth(vec2 uv, float sdf) {
@@ -233,7 +244,7 @@ float calcSeamDepth(vec2 uv, float sdf) {
     vec3 c_down   = texture(u_imageTexture, uv - vec2(0.0, offset.y)).rgb;
     float dx = length(c_right - c_left);
     float dy = length(c_up - c_down);
-    return -pow(smoothstep(0.1, 0.5, length(vec2(dx, dy))), 1.5) * 0.12 * smoothstep(0.01, 0.06, sdf);
+    return -pow(smoothstep(0.1, 0.5, length(vec2(dx, dy))), 1.5) * 0.12 * smoothstep(0.01, 0.06, sdf) * u_inflationDepth * u_entranceProgress;
 }
 
 // Detailed Procedural Studio Environment
@@ -356,15 +367,49 @@ void main() {
 
     color = linearToSrgb(acesFilm(color));
 
+    // Mix flat unshaded original texture with shaded 3D color
+    // This allows it to quickly breathe into 3D on entrance (u_entranceProgress: 0 -> 1)
+    // while still respecting the manual slider (u_inflationDepth)
+    float currentInflation = u_inflationDepth * u_entranceProgress;
+    color = mix(texColorRaw.rgb, color, currentInflation);
+
     float smoothedSDF = smoothstep(0.0, 0.06, sharpSDF); // Keep edge sharp
     
-    // Blend transparent background pixels with the HTML page background color (#1a1a24)
-    vec3 pageBg = vec3(0.102, 0.102, 0.141);
+    // Blend transparent background pixels with the HTML page background color (#0d0d11)
+    vec3 pageBg = vec3(0.051, 0.051, 0.067); // Match body bg #0d0d11
     vec4 origTex = texture(u_imageTexture, v_uv);
     vec3 bgColor = mix(pageBg, origTex.rgb, origTex.a); 
     
-    // Apply soft drop shadow to the background
-    float shadowIntensity = smoothstep(0.0, 0.12, length(bleedOffset)) * mask;
+    // AI gradient circle wave out (one-time expanding wave ring inside the balloon region)
+    vec2 centerUV = vec2(0.5, 0.5);
+    float dist = length(v_uv - centerUV);
+    
+    // Ring expands from center (radius 0.0 to 1.1)
+    float ringRadius = u_entranceProgress * 1.1;
+    float ringWidth = 0.18; // Balanced soft volumetric glow band
+    float ring = smoothstep(ringWidth, 0.0, abs(dist - ringRadius));
+    
+    // Soft radial fade near center and far borders
+    ring *= smoothstep(1.1, 0.2, dist);
+    
+    // Wave colors
+    vec3 waveColor1 = vec3(1.0, 0.478, 0.349);   // Peach/Orange #ff7a59
+    vec3 waveColor2 = vec3(1.0, 0.32, 0.48);     // Pink/Coral #ff527b
+    vec3 waveColor3 = vec3(0.043, 0.576, 0.901); // Neon Blue #0b93e6
+    
+    vec3 waveCol = mix(waveColor1, waveColor2, sin(dist * 6.0 - u_entranceProgress * 5.0) * 0.5 + 0.5);
+    waveCol = mix(waveCol, waveColor3, cos(dist * 4.0 + u_entranceProgress * 3.0) * 0.5 + 0.5);
+    
+    // Fade the wave intensity out to 0.0 as u_entranceProgress reaches 1.0
+    // S-curve smoothstep fade for soft trailing decay
+    float waveFade = 1.0 - smoothstep(0.0, 1.0, u_entranceProgress);
+    float waveIntensity = 0.9 * waveFade * u_inflationDepth; 
+    
+    // Add the bright glowing scanner ring directly onto the balloon color
+    color += waveCol * ring * waveIntensity * smoothedSDF;
+    
+    // Apply soft drop shadow to the background (diminishes as balloon flattens)
+    float shadowIntensity = smoothstep(0.0, 0.12, length(bleedOffset)) * mask * currentInflation;
     bgColor = mix(bgColor, vec3(0.0), shadowIntensity * 0.45);
     
     fragColor = vec4(mix(bgColor, color, smoothedSDF), 1.0);
