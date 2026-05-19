@@ -222,7 +222,7 @@ export class BalloonizeEngine {
         this.canvas.addEventListener('pointerdown', (e) => {
             this.canvas.setPointerCapture(e.pointerId);
             updatePointer(e);
-            this.pointerForce = 0.5; // Stronger click (force x2)
+            this.pointerForce = 1.0; // Stronger click (force x2)
             this.isInteracting = true;
             this.wake();
         });
@@ -230,9 +230,9 @@ export class BalloonizeEngine {
         this.canvas.addEventListener('pointermove', (e) => {
             updatePointer(e);
             if (this.isInteracting) {
-                this.pointerForce = 0.5; // Dragging state (deep)
+                this.pointerForce = 1.0; // Dragging state (deep)
             } else {
-                this.pointerForce = 0.25; // Hover state (used to be click state)
+                this.pointerForce = 0.5; // Hover state (used to be click state)
             }
             this.wake();
         });
@@ -240,7 +240,7 @@ export class BalloonizeEngine {
         this.canvas.addEventListener('pointerup', (e) => {
             this.canvas.releasePointerCapture(e.pointerId);
             this.isInteracting = false;
-            this.pointerForce = 0.25; // Revert to hover state
+            this.pointerForce = 0.5; // Revert to hover state
             this.wake();
         });
 
