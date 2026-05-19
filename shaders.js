@@ -99,24 +99,18 @@ void main() {
     float laplacian = (u_left + u_right + u_up + u_down) - 4.0 * u_t;
 
     // --- GAUSSIAN CURVATURE REGULARIZER ---
-    // Calculate second partial derivatives
     float z_xx = u_right + u_left - 2.0 * u_t;
     float z_yy = u_up + u_down - 2.0 * u_t;
     float z_xy = (u_ur + u_dl - u_ul - u_dr) * 0.25;
 
-    // Gaussian Curvature K = (z_xx * z_yy) - (z_xy)^2
     float K = (z_xx * z_yy) - (z_xy * z_xy);
-    
-    // Developable Surface Penalty: Mylar wants K to be exactly 0.
-    // If K is high (forming a sphere or saddle), we aggressively damp the kinetic energy
-    // to force the waves to align into cylindrical folds.
     float developablePenalty = clamp(abs(K) * 500.0, 0.0, 0.2);
     
-    float tension = 0.4 * mask;        
+    // Tuned: update faster, damp a bit
+    float tension = 0.5 * mask;        
     float pressure = 0.05 * mask;      
     
-    // Apply the penalty to the structural damping
-    float damping = 0.85 - developablePenalty;              
+    float damping = 0.82 - developablePenalty;              
     
     float acceleration = (tension * tension) * laplacian + pressure;
     float u_t_plus = 2.0 * u_t - u_t_minus + acceleration;
