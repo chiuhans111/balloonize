@@ -157,8 +157,8 @@ export class BalloonizeEngine {
     }
 
     initEvents() {
-        this.physicsParams = { tension: 0.6, damping: 0.75, diffusion: 0.12 };
-        this.lightingParams = { env: 1.0, az: -45, el: 50, specCore: 10.0, specGlow: 5.0, rim: 0.6 };
+        this.physicsParams = { tension: 0.7, damping: 0.67, diffusion: 0.15 };
+        this.lightingParams = { env: 1.4, az: -45, el: 39, specCore: 10.0, specGlow: 5.0, rim: 0.2 };
         
         const slTension = document.getElementById('slider-tension');
         const slDamping = document.getElementById('slider-damping');
@@ -379,12 +379,12 @@ export class BalloonizeEngine {
             u_simState: this.simA,
             u_simTexelSize: [1.0 / this.simRes, 1.0 / this.simRes],
             u_screenTexelSize: [1.0 / this.canvas.width, 1.0 / this.canvas.height],
-            u_envIntensity: this.lightingParams ? this.lightingParams.env : 1.0,
+            u_envIntensity: this.lightingParams ? this.lightingParams.env : 1.4,
             u_lightDir: lightDir,
             u_specCore: this.lightingParams ? this.lightingParams.specCore : 10.0,
             u_specGlow: this.lightingParams ? this.lightingParams.specGlow : 5.0,
-            u_rim: this.lightingParams ? this.lightingParams.rim : 0.6,
-            u_diffusion: this.physicsParams ? this.physicsParams.diffusion : 0.12
+            u_rim: this.lightingParams ? this.lightingParams.rim : 0.2,
+            u_diffusion: this.physicsParams ? this.physicsParams.diffusion : 0.15
         });
     }
 }

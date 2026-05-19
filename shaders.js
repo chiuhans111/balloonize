@@ -181,11 +181,36 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv, vec2 texSize) {
     return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 }
 
+// 9-TAP GAUSSIAN KERNEL
+vec4 sampleGaussian(vec2 uv, vec2 texSize, float radius) {
+    vec2 off = texSize * radius;
+    vec4 sum = vec4(0.0);
+    sum += sampleSmooth(u_simState, uv + vec2(-off.x, -off.y), texSize) * 0.0625;
+    sum += sampleSmooth(u_simState, uv + vec2( 0.0,   -off.y), texSize) * 0.1250;
+    sum += sampleSmooth(u_simState, uv + vec2( off.x, -off.y), texSize) * 0.0625;
+    sum += sampleSmooth(u_simState, uv + vec2(-off.x,  0.0),   texSize) * 0.1250;
+    sum += sampleSmooth(u_simState, uv + vec2( 0.0,    0.0),   texSize) * 0.2500;
+    sum += sampleSmooth(u_simState, uv + vec2( off.x,  0.0),   texSize) * 0.1250;
+    sum += sampleSmooth(u_simState, uv + vec2(-off.x,  off.y), texSize) * 0.0625;
+    sum += sampleSmooth(u_simState, uv + vec2( 0.0,    off.y), texSize) * 0.1250;
+    sum += sampleSmooth(u_simState, uv + vec2( off.x,  off.y), texSize) * 0.0625;
+    return sum;
+}
+
+// Crease Function
+float getCreases(vec2 uv, float wave, float sdf, float mask, vec2 tangent) {
+    vec2 noiseOffset = vec2(sin(uv.y * 12.0 + wave), cos(uv.x * 12.0 - wave)) * 0.03;
+    vec2 perturbedUV = uv + noiseOffset;
+    float crimpPhase = dot(perturbedUV * 75.0, tangent);
+    float inwardFadeEnd = 0.12 + sin(uv.x * 15.0) * cos(uv.y * 15.0) * 0.05;
+    float buckleZone = smoothstep(inwardFadeEnd, 0.0, sdf) * smoothstep(-0.02, 0.02, sdf) * mask;
+    float ridge = 1.0 - pow(abs(sin(crimpPhase + wave * 2.0)), 1.5);
+    return (ridge * 2.0 - 1.0) * buckleZone * 0.065;
+}
+
 float calcTotalDepth(float wave, float sdf) {
-    float baseInflation = 2.4; // adjusted to keep max height roughly the same
-    float safeSDF = max(sdf, 0.0); 
-    // Increased exponent from 0.4 to 0.55 for a rounder, less flat-top profile
-    return wave + pow(safeSDF, 0.55) * baseInflation;
+    float baseInflation = 2.5; 
+    return wave + pow(max(sdf, 0.0), 0.50) * baseInflation;
 }
 
 float calcSeamDepth(vec2 uv, float sdf) {
@@ -194,160 +219,133 @@ float calcSeamDepth(vec2 uv, float sdf) {
     vec3 c_right  = texture(u_imageTexture, uv + vec2(offset.x, 0.0)).rgb;
     vec3 c_up     = texture(u_imageTexture, uv + vec2(0.0, offset.y)).rgb;
     vec3 c_down   = texture(u_imageTexture, uv - vec2(0.0, offset.y)).rgb;
-    
     float dx = length(c_right - c_left);
     float dy = length(c_up - c_down);
-    float edge = smoothstep(0.1, 0.5, length(vec2(dx, dy)));
-    
-    return -pow(edge, 1.5) * 0.15 * smoothstep(0.01, 0.06, sdf);
+    return -pow(smoothstep(0.1, 0.5, length(vec2(dx, dy))), 1.5) * 0.12 * smoothstep(0.01, 0.06, sdf);
 }
 
-// Re-added Crease Function with randomized inward fade
-float getCreases(vec2 uv, float wave, float sdf, float mask, vec2 tangent) {
-    vec2 noiseOffset = vec2(sin(uv.y * 12.0 + wave), cos(uv.x * 12.0 - wave)) * 0.03;
-    vec2 perturbedUV = uv + noiseOffset;
-    
-    float crimpPhase = dot(perturbedUV * 75.0, tangent);
-    
-    // Randomized inward fade distance for organic look
-    float inwardFadeEnd = 0.12 + sin(uv.x * 15.0) * cos(uv.y * 15.0) * 0.05;
-    float buckleZone = smoothstep(inwardFadeEnd, 0.0, sdf) * smoothstep(-0.02, 0.02, sdf) * mask;
-    
-    float ridge = 1.0 - pow(abs(sin(crimpPhase + wave * 2.0)), 1.5);
-    
-    return (ridge * 2.0 - 1.0) * buckleZone * 0.10; // Stronger creases
-}
-
-// Procedural Environment Reflection Map
-vec3 getProceduralEnvMap(vec3 r) {
-    float phi = atan(r.z, r.x); // -PI to PI
-    float theta = acos(r.y);    // 0 to PI
-    
+// Detailed Procedural Studio Environment
+vec3 getProceduralEnv(vec3 r) {
+    float phi = atan(r.z, r.x);
     vec3 col = vec3(0.0);
     
-    // 1. Intricate Studio Window (Left Side)
-    // Create panes and mullions (fins)
+    // Left Studio Window Pane Structure
     float winX = smoothstep(0.4, 0.42, sin(phi * 6.0));
     float winY = smoothstep(0.4, 0.42, sin(r.y * 12.0));
-    float windowBounds = smoothstep(0.6, 0.7, r.x) * smoothstep(0.0, 0.3, r.y);
-    float window = winX * winY * windowBounds;
-    col += vec3(3.0, 3.2, 3.5) * window;
+    float windowBounds = smoothstep(0.3, 0.8, r.x) * smoothstep(-0.5, 0.6, r.y);
+    col += vec3(3.0, 3.2, 3.5) * winX * winY * windowBounds;
     
-    // 2. High-Tech Ceiling Array (Overhead)
-    // Multiple thin fluorescent tubes
-    float ceilingTubes = smoothstep(0.8, 0.95, sin(r.x * 40.0));
-    float overhead = smoothstep(0.85, 0.95, r.y);
-    col += vec3(1.5, 2.0, 2.5) * ceilingTubes * overhead * 2.0;
+    // Right Softbox LED Matrix
+    float ledX = smoothstep(0.5, 0.9, sin(phi * 30.0));
+    float ledY = smoothstep(0.5, 0.9, sin(r.y * 30.0));
+    float boxBounds = smoothstep(0.4, 0.8, -r.x) * smoothstep(-0.4, 0.5, r.y);
+    col += vec3(2.5, 2.0, 1.6) * ledX * ledY * boxBounds;
     
-    // 3. Right Side Softbox with distinct LED grid matrix
-    float ledGridX = smoothstep(0.5, 0.9, sin(phi * 40.0));
-    float ledGridY = smoothstep(0.5, 0.9, sin(r.y * 40.0));
-    float softboxBounds = smoothstep(0.6, 0.8, -r.x) * smoothstep(-0.2, 0.5, r.y);
-    col += vec3(2.0, 1.8, 1.5) * ledGridX * ledGridY * softboxBounds * 2.5;
+    // Horizon repeating window slots (wrapping edge)
+    float horizonMask = smoothstep(0.5, 0.0, abs(r.z));
+    float windowSlots = smoothstep(0.3, 0.6, sin(phi * 12.0));
+    col += vec3(2.0, 2.5, 3.0) * windowSlots * horizonMask;
     
-    // 4. Studio environment ambient bounce (dark, slightly warm floor)
-    float horizon = smoothstep(0.1, 0.0, abs(r.y + 0.2));
-    col += vec3(0.5, 0.4, 0.3) * horizon;
+    // Overhead light strip
+    float overhead = smoothstep(0.8, 0.95, r.y) * smoothstep(0.7, 0.9, sin(r.x * 20.0));
+    col += vec3(1.5, 1.8, 2.2) * overhead;
     
-    // Base ambient room fill (slight blue gradient)
-    col += mix(vec3(0.02, 0.02, 0.04), vec3(0.1, 0.15, 0.2), smoothstep(-1.0, 1.0, r.y));
-    
+    // Ambient room fill
+    col += mix(vec3(0.02, 0.02, 0.04), vec3(0.1, 0.12, 0.15), smoothstep(-1.0, 1.0, r.y));
     return col;
 }
 
 void main() {
-    vec4 state = sampleSmooth(u_simState, v_uv, u_simTexelSize);
-    float mask = state.b; float sdf = state.a;
+    // 1. GAUSSIAN BASE PASS
+    float blurRadius = 1.0 + u_diffusion * 6.0; 
+    vec4 g_state = sampleGaussian(v_uv, u_simTexelSize, blurRadius);
     
-    // Widen the sampling offset based on the Diffusion slider to smooth out SDF grid artifacts
-    float offsetMult = 1.0 + u_diffusion * 25.0;
+    // Keep raw mask and SDF sharp for perfect boundary silhouettes
+    vec4 rawState = texture(u_simState, v_uv);
+    float mask = rawState.b; 
+    float sharpSDF = rawState.a;
+    float sdf = g_state.a;
+    float wave = g_state.r;
+    
+    // 2. GEOMETRIC DERIVATIVE PASS
+    float offsetMult = 2.0 + u_diffusion * 8.0;
     vec2 offset = u_simTexelSize * offsetMult;
     
-    // 4-way cross sampling for low-pass box filtering and normal calculation
-    vec4 st_left  = sampleSmooth(u_simState, v_uv - vec2(offset.x, 0.0), u_simTexelSize);
-    vec4 st_right = sampleSmooth(u_simState, v_uv + vec2(offset.x, 0.0), u_simTexelSize);
-    vec4 st_up    = sampleSmooth(u_simState, v_uv + vec2(0.0, offset.y), u_simTexelSize);
-    vec4 st_down  = sampleSmooth(u_simState, v_uv - vec2(0.0, offset.y), u_simTexelSize);
+    vec4 g_left  = sampleGaussian(v_uv - vec2(offset.x, 0.0), u_simTexelSize, blurRadius);
+    vec4 g_right = sampleGaussian(v_uv + vec2(offset.x, 0.0), u_simTexelSize, blurRadius);
+    vec4 g_up    = sampleGaussian(v_uv + vec2(0.0, offset.y), u_simTexelSize, blurRadius);
+    vec4 g_down  = sampleGaussian(v_uv - vec2(0.0, offset.y), u_simTexelSize, blurRadius);
     
-    // Low-pass filtered wave channel to keep surface texture perfectly smooth
-    float wave = (state.r + st_left.r + st_right.r + st_up.r + st_down.r) * 0.2;
-
-    vec2 slope_normal = normalize(vec2(st_left.a - st_right.a, st_down.a - st_up.a) + 0.0001);
+    vec2 slope_normal = normalize(vec2(g_left.a - g_right.a, g_down.a - g_up.a) + 0.0001);
     vec2 tangent = vec2(-slope_normal.y, slope_normal.x);
     vec2 bleedOffset = slope_normal * clamp(wave * 2.0, -1.0, 1.0) * u_simTexelSize;
     vec2 warpedUV = v_uv - bleedOffset;
 
-    // Build the clean composite depth field
-    float h_left  = calcTotalDepth(st_left.r,  st_left.a)  + calcSeamDepth(warpedUV - vec2(offset.x, 0.0), st_left.a);
-    float h_right = calcTotalDepth(st_right.r, st_right.a) + calcSeamDepth(warpedUV + vec2(offset.x, 0.0), st_right.a);
-    float h_up    = calcTotalDepth(st_up.r,    st_up.a)    + calcSeamDepth(warpedUV + vec2(0.0, offset.y), st_up.a);
-    float h_down  = calcTotalDepth(st_down.r,  st_down.a)  + calcSeamDepth(warpedUV - vec2(0.0, offset.y), st_down.a);
+    // Macro-depth (smooth balloon dome geometry)
+    float h_left  = calcTotalDepth(g_left.r,  g_left.a);
+    float h_right = calcTotalDepth(g_right.r, g_right.a);
+    float h_up    = calcTotalDepth(g_up.r,    g_up.a);
+    float h_down  = calcTotalDepth(g_down.r,  g_down.a);
     
-    float c_left  = getCreases(v_uv - vec2(u_simTexelSize.x, 0.0), wave, sdf, mask, tangent);
-    float c_right = getCreases(v_uv + vec2(u_simTexelSize.x, 0.0), wave, sdf, mask, tangent);
-    float c_up    = getCreases(v_uv + vec2(0.0, u_simTexelSize.y), wave, sdf, mask, tangent);
-    float c_down  = getCreases(v_uv - vec2(0.0, u_simTexelSize.y), wave, sdf, mask, tangent);
+    float dZdx_macro = (h_right - h_left) * 0.5 / offset.x; 
+    float dZdy_macro = (h_up - h_down) * 0.5 / offset.y;
+
+    // Decoupled tight-scale derivatives (keeps seams and creases sharp)
+    float s_left  = calcSeamDepth(warpedUV - vec2(u_simTexelSize.x, 0.0), sharpSDF);
+    float s_right = calcSeamDepth(warpedUV + vec2(u_simTexelSize.x, 0.0), sharpSDF);
+    float s_up    = calcSeamDepth(warpedUV + vec2(0.0, u_simTexelSize.y), sharpSDF);
+    float s_down  = calcSeamDepth(warpedUV - vec2(0.0, u_simTexelSize.y), sharpSDF);
     
-    // Normalize derivatives by the sampling width to maintain correct macro-slope while killing micro-noise,
-    // but leave the micro-creases unaffected so they stay crisp and strong.
-    float dZdx = ((h_right - h_left) / (2.0 * offsetMult)) + ((c_right - c_left) * 0.5); 
-    float dZdy = ((h_up - h_down) / (2.0 * offsetMult)) + ((c_up - c_down) * 0.5);
+    float dZdx_seam = (s_right - s_left) * 0.5 / u_simTexelSize.x;
+    float dZdy_seam = (s_up - s_down) * 0.5 / u_simTexelSize.y;
     
-    // Solid, highly inflated normal distribution
-    vec3 normal = normalize(vec3(-dZdx, -dZdy, 0.25));
+    float creases = getCreases(v_uv, wave, sdf, mask, tangent);
+    float c_l = getCreases(v_uv - vec2(u_simTexelSize.x, 0.0), wave, sdf, mask, tangent);
+    float c_r = getCreases(v_uv + vec2(u_simTexelSize.x, 0.0), wave, sdf, mask, tangent);
+    float c_u = getCreases(v_uv + vec2(0.0, u_simTexelSize.y), wave, sdf, mask, tangent);
+    float c_d = getCreases(v_uv - vec2(0.0, u_simTexelSize.y), wave, sdf, mask, tangent);
+
+    float dZdx = dZdx_macro + dZdx_seam + (((c_r - c_l) * 0.5) / u_simTexelSize.x); 
+    float dZdy = dZdy_macro + dZdy_seam + (((c_u - c_d) * 0.5) / u_simTexelSize.y);
     
-    // --- HIGH-CONTRAST DUAL STUDIO LIGHTING MATRIX ---
+    vec3 normal = normalize(vec3(-dZdx, -dZdy, 28.0));
+    
+    // 3. LIGHTING AND SHADING
     vec3 viewDir = vec3(0.0, 0.0, 1.0);
     vec3 refVec = reflect(-viewDir, normal);
     
     vec4 texColorRaw = texture(u_imageTexture, warpedUV);
     vec3 albedo = srgbToLinear(texColorRaw.rgb);
     
-    vec3 studioEnv = getProceduralEnvMap(refVec) * u_envIntensity;
+    // Detailed room environment reflections
+    vec3 studioEnv = getProceduralEnv(refVec) * u_envIntensity;
     
-    // 1. Soft 45-Degree Main Light (Dual-Glow: Soft Core + Broad Bloom)
+    // Specular Highlight
     vec3 pointLightDir = normalize(u_lightDir);
     float h_dot_l = max(dot(refVec, pointLightDir), 0.0);
-    
-    float specPointCore = pow(h_dot_l, 150.0) * u_specCore;   
+    float specPointCore = pow(h_dot_l, 128.0) * u_specCore;   
     float specPointGlow = pow(h_dot_l, 24.0) * u_specGlow;    
-    float specPoint = specPointCore; // Pass core intensity for additive bloom below
-    studioEnv += vec3(1.0, 0.95, 0.9) * (specPointCore + specPointGlow);
+    studioEnv += vec3(1.0, 0.96, 0.92) * (specPointCore + specPointGlow);
     
-    // 2. The "Rim-like" Softbox Panels
-    float softbox1 = smoothstep(0.7, 0.95, dot(refVec, normalize(vec3(0.7, 0.5, 0.4))));
-    studioEnv += vec3(2.0, 1.8, 1.5) * softbox1 * u_envIntensity;
-    
-    float softbox2 = smoothstep(0.3, 0.9, dot(refVec, normalize(vec3(0.0, -0.9, 0.4))));
-    studioEnv += vec3(0.3, 0.5, 0.8) * softbox2 * u_envIntensity;
-    
-    // 3. Pure Analytical Rim Edge Glow (Widened acceptance angle)
-    float rimGlow = pow(1.0 - max(dot(normal, viewDir), 0.0), 1.5); // reduced from 3.0 to wrap much further around sides
-    // Calculate rim color but do not add to studioEnv, add it later directly
-    vec3 rimColor = vec3(0.8, 0.9, 1.0) * rimGlow * u_rim * 4.0; // reduced multiplier since it covers more area
-
-    // High-contrast deep base shadows
-    float ndl = max(dot(normal, pointLightDir), 0.0);
-    vec3 ambientComponent = albedo * (ndl * 0.5 + 0.1); 
-
-    // Pure Plastic Fresnel
+    // Backlit Rim Glow (Removed from studioEnv to prevent Fresnel squashing)
     float NdotV = max(dot(normal, viewDir), 0.0);
-    float fresnel = 0.04 + (1.0 - 0.04) * pow(1.0 - NdotV, 5.0);
-    
-    // Master Composite
-    vec3 color = ambientComponent;
-    color = mix(color, studioEnv, fresnel);
-    
-    // Add direct specular light bloom back onto the mesh surface for visual pop
-    color += vec3(2.0) * specPoint * albedo;
-    
-    // Explicitly add rim light so it is independent of Fresnel mixing
-    color += rimColor;
+    float rimGlow = pow(1.0 - NdotV, 1.2) * 1.2; // Softened exponent (1.2 instead of 4.0) to cover more inwards
+    vec3 rimColor = vec3(0.9, 0.95, 1.0) * rimGlow * u_rim * mask;
+
+    // Diffuse Ambient component
+    float ndl = max(dot(normal, pointLightDir), 0.0);
+    vec3 ambientComponent = albedo * (ndl * 0.55 + 0.12); 
+
+    // Enhanced Plastic/Mylar Fresnel (0.15 base reflectivity for glossy finish)
+    float fresnel = 0.15 + 0.85 * pow(1.0 - NdotV, 5.0);
+    vec3 color = mix(ambientComponent, studioEnv, fresnel);
+    color += vec3(3.5) * specPointCore * albedo; 
+    color += rimColor; // Added outside Fresnel mix so it can wrap inward freely
 
     color = linearToSrgb(acesFilm(color));
 
     float highResAlpha = texColorRaw.a;
-    float smoothedSDF = smoothstep(0.0, 0.06, sdf);
+    float smoothedSDF = smoothstep(0.0, 0.06, sharpSDF); // Keep edge sharp
     float finalAlphaMask = max(highResAlpha, smoothedSDF);
 
     vec3 bgColor = vec3(0.04, 0.03, 0.04); 
