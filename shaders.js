@@ -50,18 +50,29 @@ void main() {
         return;
     }
 
-    // 2. Manhattan Distance Field Generation (Plastic Structural Limit)
+    // 2. TRUE EUCLIDEAN SDF GENERATION
+    // Upgraded to 8-way Chamfer distance to eliminate the "X" pyramid artifact
     if (m_left == 0.0 || m_right == 0.0 || m_up == 0.0 || m_down == 0.0) {
         currentSDF = 0.004; // Edge boundary
     } else {
+        // Orthogonal Neighbors (Distance step = 1.0)
         float s_left  = texture(u_simState, v_uv + vec2(-u_texelSize.x, 0.0)).a;
         float s_right = texture(u_simState, v_uv + vec2( u_texelSize.x, 0.0)).a;
         float s_up    = texture(u_simState, v_uv + vec2(0.0,  u_texelSize.y)).a;
         float s_down  = texture(u_simState, v_uv + vec2(0.0, -u_texelSize.y)).a;
         
-        // Interior pixel grows distance based on neighbors
-        float minSDF = min(min(s_left, s_right), min(s_up, s_down));
-        currentSDF = minSDF + 0.004;
+        // Diagonal Neighbors (Distance step = sqrt(2) approx 1.4142)
+        float s_ul = texture(u_simState, v_uv + vec2(-u_texelSize.x,  u_texelSize.y)).a;
+        float s_ur = texture(u_simState, v_uv + vec2( u_texelSize.x,  u_texelSize.y)).a;
+        float s_dl = texture(u_simState, v_uv + vec2(-u_texelSize.x, -u_texelSize.y)).a;
+        float s_dr = texture(u_simState, v_uv + vec2( u_texelSize.x, -u_texelSize.y)).a;
+        
+        float step = 0.004;
+        float minOrtho = min(min(s_left, s_right), min(s_up, s_down)) + step;
+        float minDiag  = min(min(s_ul, s_ur), min(s_dl, s_dr)) + step * 1.41421356;
+        
+        // Grow smooth cone
+        currentSDF = min(minOrtho, minDiag);
     }
 
     fragColor = vec4(currentState.r, currentState.g, 1.0, currentSDF);
