@@ -145,7 +145,7 @@ export class BalloonizeEngine {
                     initData[i*4 + 0] = 0; // u_t
                     initData[i*4 + 1] = 0; // u_t-1
                     initData[i*4 + 2] = mask; // Mask
-                    initData[i*4 + 3] = 0; // SDF
+                    initData[i*4 + 3] = mask; // SDF (initialize to 1.0 inside mask)
                 }
                 gl.bindTexture(gl.TEXTURE_2D, this.simA);
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, this.simRes, this.simRes, 0, gl.RGBA, gl.FLOAT, initData);
@@ -167,7 +167,7 @@ export class BalloonizeEngine {
         this.canvas.addEventListener('pointerdown', (e) => {
             this.canvas.setPointerCapture(e.pointerId);
             updatePointer(e);
-            this.pointerForce = 0.8;
+            this.pointerForce = 0.25; // Lowered for stability with wide brush
             this.isInteracting = true;
             this.wake();
         });
@@ -175,7 +175,7 @@ export class BalloonizeEngine {
         this.canvas.addEventListener('pointermove', (e) => {
             if (this.isInteracting) {
                 updatePointer(e);
-                this.pointerForce = 0.5;
+                this.pointerForce = 0.15; // Lowered for smooth dragging
                 this.wake();
             }
         });
@@ -230,8 +230,8 @@ export class BalloonizeEngine {
     }
 
     startTrimLoop() {
-        // Run 30 passes to erode the mask inward to the shape boundaries
-        for (let i = 0; i < 30; i++) {
+        // Run 100 passes to erode the mask inward to the shape boundaries and build SDF
+        for (let i = 0; i < 100; i++) {
             this.runPass(this.trimProgram, this.fboB, {
                 u_imageTexture: this.imageTex,
                 u_simState: this.simA,

@@ -14,7 +14,7 @@ void main() {
 export const trimFragmentShaderSource = `#version 300 es
 precision highp float;
 uniform sampler2D u_imageTexture;
-uniform sampler2D u_simState; // Current mask status
+uniform sampler2D u_simState;
 uniform vec2 u_texelSize;
 uniform float u_gradientThreshold;
 
@@ -24,14 +24,14 @@ out vec4 fragColor;
 void main() {
     vec4 currentState = texture(u_simState, v_uv);
     float currentMask = currentState.b;
+    float currentSDF = currentState.a;
     
-    // Quick escape if already marked as background
     if (currentMask == 0.0) {
-        fragColor = currentState;
+        fragColor = vec4(0.0, 0.0, 0.0, 0.0);
         return;
     }
 
-    // Compute simple local luminance gradient via Sobel-style differences
+    // 1. Edge Erosion Logic
     float l_left  = dot(texture(u_imageTexture, v_uv + vec2(-u_texelSize.x, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
     float l_right = dot(texture(u_imageTexture, v_uv + vec2( u_texelSize.x, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
     float l_up    = dot(texture(u_imageTexture, v_uv + vec2(0.0,  u_texelSize.y)).rgb, vec3(0.299, 0.587, 0.114));
@@ -39,19 +39,32 @@ void main() {
     
     float grad = length(vec2(l_left - l_right, l_down - l_up));
 
-    // Sample neighbors' mask states
     float m_left  = texture(u_simState, v_uv + vec2(-u_texelSize.x, 0.0)).b;
     float m_right = texture(u_simState, v_uv + vec2( u_texelSize.x, 0.0)).b;
     float m_up    = texture(u_simState, v_uv + vec2(0.0,  u_texelSize.y)).b;
     float m_down  = texture(u_simState, v_uv + vec2(0.0, -u_texelSize.y)).b;
 
-    // If an edge neighbor is background and our local gradient is weak, erode inward
     float edgeProximity = 4.0 - (m_left + m_right + m_up + m_down);
     if (edgeProximity > 0.0 && grad < u_gradientThreshold) {
-        currentMask = 0.0; // Trim this pixel out
+        fragColor = vec4(0.0, 0.0, 0.0, 0.0); // Trim this pixel out
+        return;
     }
 
-    fragColor = vec4(currentState.r, currentState.g, currentMask, currentState.a);
+    // 2. Manhattan Distance Field Generation (Plastic Structural Limit)
+    if (m_left == 0.0 || m_right == 0.0 || m_up == 0.0 || m_down == 0.0) {
+        currentSDF = 0.004; // Edge boundary
+    } else {
+        float s_left  = texture(u_simState, v_uv + vec2(-u_texelSize.x, 0.0)).a;
+        float s_right = texture(u_simState, v_uv + vec2( u_texelSize.x, 0.0)).a;
+        float s_up    = texture(u_simState, v_uv + vec2(0.0,  u_texelSize.y)).a;
+        float s_down  = texture(u_simState, v_uv + vec2(0.0, -u_texelSize.y)).a;
+        
+        // Interior pixel grows distance based on neighbors
+        float minSDF = min(min(s_left, s_right), min(s_up, s_down));
+        currentSDF = minSDF + 0.004;
+    }
+
+    fragColor = vec4(currentState.r, currentState.g, 1.0, currentSDF);
 }
 `;
 
@@ -70,9 +83,8 @@ void main() {
     float u_t = center.r;
     float u_t_minus = center.g;
     float mask = center.b;
-    float sdf = center.a;
+    float sdf = center.a; // True distance to the edge
 
-    // 4-way discrete Laplacian
     float u_left  = texture(u_simState, v_uv + vec2(-u_texelSize.x, 0.0)).r;
     float u_right = texture(u_simState, v_uv + vec2( u_texelSize.x, 0.0)).r;
     float u_up    = texture(u_simState, v_uv + vec2(0.0,  u_texelSize.y)).r;
@@ -80,17 +92,40 @@ void main() {
     
     float laplacian = (u_left + u_right + u_up + u_down) - 4.0 * u_t;
 
-    // Wave equation constraints
-    float waveSpeed = 0.4 * mask; // Absolute wall boundary conditions outside mask
-    float damping = 0.98;
+    // INELASTIC PLASTIC PHYSICS
+    float tension = 0.5 * mask;        // Rapid wave transmission
+    float pressure = 0.005 * mask;     // Constant air injection pushing the shape UP
+    float damping = 0.94;              // Quick energy loss (plastic doesn't bounce endlessly)
     
-    float u_t_plus = 2.0 * u_t - u_t_minus + (waveSpeed * waveSpeed) * laplacian;
+    // Notice: NO spring restoring force. Plastic only holds shape due to pressure.
+    float acceleration = (tension * tension) * laplacian + pressure;
+
+    // Verlet integration
+    float u_t_plus = 2.0 * u_t - u_t_minus + acceleration;
     u_t_plus *= damping;
 
-    // Inject pointer force interaction
+    // POINTER INTERACTION (Squishing the inflated bag)
+    float brushRadius = 0.10;
     float distToPointer = length(v_uv - u_pointerPos);
-    if (distToPointer < 0.04 && u_pointerForce > 0.0) {
-        u_t_plus += u_pointerForce * (1.0 - distToPointer / 0.04);
+    
+    if (distToPointer < brushRadius && abs(u_pointerForce) > 0.0) {
+        float dentShape = pow(1.0 - (distToPointer / brushRadius), 2.0);
+        // Pushing INWARD against the air pressure
+        u_t_plus -= abs(u_pointerForce) * dentShape * mask; 
+    }
+
+    // HARD STRUCTURAL CLOTH CONSTRAINT (Inextensibility Limit)
+    // The maximum height of the plastic is strictly bound by a dome profile of the SDF.
+    // If it inflates past this, it hits the physical limit of the material and stops.
+    float plastic_limit = pow(sdf, 0.65) * 2.5; 
+    
+    if (u_t_plus > plastic_limit) {
+        u_t_plus = plastic_limit; // Clamp to the physical stretch limit
+    }
+
+    // PERFECT EDGE LOCK
+    if (sdf <= 0.0) {
+        u_t_plus = 0.0;
     }
 
     fragColor = vec4(u_t_plus, u_t, mask, sdf);
@@ -144,7 +179,8 @@ void main() {
     float dZdy = ((w_up - w_down) * 0.5) + dFdy(creases);
     
     // The Z-weight determines the "thickness" of the fluid. Lower = thicker/glassier.
-    vec3 normal = normalize(vec3(-dZdx, -dZdy, 0.015));
+    // Increased Z-weight (0.04) makes the material look thicker and slightly less sharp-glassy
+    vec3 normal = normalize(vec3(-dZdx, -dZdy, 0.04));
     
     // 4. Lighting & Specular Calculation
     vec3 lightDir = normalize(vec3(0.3, 0.7, 0.8));
