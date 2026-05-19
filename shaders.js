@@ -289,8 +289,10 @@ float getCreases(vec2 uv, float wave, float sdf, float mask, vec2 tangent) {
 }
 
 float calcTotalDepth(float wave, float sdf) {
-    float baseInflation = 2.5; 
-    return (wave + pow(max(sdf, 0.0), 0.50) * baseInflation) * u_inflationDepth * u_entranceProgress;
+    float x = clamp(sdf * 3.5, 0.0, 1.0);
+    float dome = sqrt(x * (2.0 - x));
+    float baseInflation = 1.35; 
+    return (wave + dome * baseInflation) * u_inflationDepth * u_entranceProgress;
 }
 
 // Compute depth offsets along image high-contrast seams
