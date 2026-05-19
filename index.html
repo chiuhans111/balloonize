@@ -13,12 +13,13 @@
     </script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Balloonize — Realistic 3D Mylar Balloon WebGL Simulator</title>
+    <title>Balloonize - balloonmorphism.</title>
     <link rel="icon" type="image/png" href="favicon.png">
     <link rel="apple-touch-icon" href="favicon.png">
     <!-- Open Graph / Cover Meta Tags -->
     <meta property="og:title" content="Balloonize — Realistic 3D Mylar Balloon WebGL Simulator">
-    <meta property="og:description" content="Inflate and interact with realistic 3D mylar balloons in your browser. Drag and drop any image to simulate WebGL physics, lighting, and waves.">
+    <meta property="og:description"
+          content="Inflate and interact with realistic 3D mylar balloons in your browser. Drag and drop any image to simulate WebGL physics, lighting, and waves.">
     <meta property="og:image" content="https://chiuhans111.github.io/balloonize/cover.jpg">
     <meta property="og:url" content="https://chiuhans111.github.io/balloonize/">
     <meta property="og:type" content="website">
@@ -70,6 +71,7 @@
         .header {
             text-align: center;
             margin-bottom: 8px;
+            width: 100%;
         }
 
         .header h1 {
@@ -99,6 +101,27 @@
             margin: 6px 0 0 0;
             letter-spacing: 0.5px;
             font-weight: 400;
+        }
+
+        .header h1 a {
+            text-decoration: none;
+            color: inherit;
+            display: inline-block;
+            transition: opacity 0.2s ease;
+        }
+
+        .header h1 a:hover {
+            opacity: 0.85;
+        }
+
+        .header .subtitle a {
+            text-decoration: none;
+            color: inherit;
+            transition: color 0.2s ease;
+        }
+
+        .header .subtitle a:hover {
+            color: var(--accent-color);
         }
 
         .canvas-wrapper {
@@ -307,8 +330,15 @@
     <div class="main-container">
         <!-- Header -->
         <div class="header">
-            <h1>Balloonize</h1>
-            <p class="subtitle">by hanschiu</p>
+            <h1><a href="https://github.com/chiuhans111/balloonize" target="_blank">Balloonize</a></h1>
+            <p class="subtitle">by <a href="https://x.com/chiu_hans" target="_blank">hanschiu</a></p>
+            <div
+                 style="margin-top: 8px; display: flex; justify-content: center; align-items: center; min-height: 20px;">
+                <iframe src="https://ghbtns.com/github-btn.html?user=chiuhans111&repo=balloonize&type=star&count=true"
+                        frameborder="0" scrolling="0" width="75" height="20" title="GitHub"
+                        style="filter: invert(1) hue-rotate(180deg); opacity: 0.7; transition: opacity 0.2s ease; border: none;"
+                        onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0.7'"></iframe>
+            </div>
             <p class="inspired">balloonmorphism &bull; inspired by figma</p>
         </div>
 
@@ -319,13 +349,17 @@
 
         <!-- Interaction Instructions -->
         <div class="instructions">
-            Drag pointer over the shape to wiggle the waves.<br>
-            Drag & drop an image or paste from clipboard to inflate!
+            Tickle the balloon to see it wobble!
         </div>
 
-        <!-- Image Upload -->
-        <div class="upload-section" style="margin-top: 10px; width: 100%;">
-            <button class="btn-upload" id="btn-upload">Upload Custom Image</button>
+        <!-- Image Actions -->
+        <div class="upload-section" style="margin-top: 10px; width: 100%; display: flex; gap: 10px;">
+            <button class="btn-upload" id="btn-upload" style="flex: 1; margin: 0;">Open New Image</button>
+            <button class="btn-upload" id="btn-download"
+                    style="flex: 1; margin: 0; background: rgba(255, 255, 255, 0.06); color: var(--text-color); border: 1px solid rgba(255, 255, 255, 0.1); box-shadow: none; transition: all 0.2s;"
+                    onmouseover="this.style.background='rgba(255, 255, 255, 0.12)'; this.style.borderColor='rgba(255, 255, 255, 0.2)';"
+                    onmouseout="this.style.background='rgba(255, 255, 255, 0.06)'; this.style.borderColor='rgba(255, 255, 255, 0.1)';">Save
+                Image </button>
             <input type="file" id="file-input" accept="image/*" style="display:none;">
         </div>
 
@@ -333,23 +367,24 @@
         <!-- Collapsible Tuning Parameters -->
         <div class="tuning-wrapper" style="width: 100%; margin-top: 16px;">
             <button class="toggle-btn" id="toggle-settings">
-                Tuning Parameters <span class="arrow">↓</span>
+                Tuning Pump (Devs Only) <span class="arrow">↓</span>
             </button>
 
             <div class="settings-panel" id="settings-panel">
                 <!-- Physics -->
-                <div class="section-title">Physics</div>
+                <div class="section-title">Latex Physics</div>
                 <div class="control-group">
-                    <label><span>Wave Speed (Tension)</span> <span class="val-badge"
+                    <label><span>Elastic Resistance (Tension)</span> <span class="val-badge"
                               id="val-tension">0.70</span></label>
                     <input type="range" id="slider-tension" min="0.1" max="0.7" step="0.01" value="0.70">
                 </div>
                 <div class="control-group">
-                    <label><span>Damping (Friction)</span> <span class="val-badge" id="val-damping">0.67</span></label>
+                    <label><span>Air Viscosity (Damping)</span> <span class="val-badge"
+                              id="val-damping">0.67</span></label>
                     <input type="range" id="slider-damping" min="0.5" max="0.99" step="0.01" value="0.67">
                 </div>
                 <div class="control-group">
-                    <label><span>Diffusion (Smoothness)</span> <span class="val-badge"
+                    <label><span>Bounciness (Smoothness)</span> <span class="val-badge"
                               id="val-diffusion">0.15</span></label>
                     <input type="range" id="slider-diffusion" min="0.0" max="0.2" step="0.01" value="0.15">
                 </div>
@@ -437,6 +472,7 @@
 
             // File selection
             const btnUpload = document.getElementById('btn-upload');
+            const btnDownload = document.getElementById('btn-download');
             const fileInput = document.getElementById('file-input');
             btnUpload.addEventListener('click', () => fileInput.click());
             fileInput.addEventListener('change', (e) => {
@@ -445,6 +481,15 @@
                     engine.setImage(file).catch(err => console.error("Error setting image from file input:", err));
                 }
             });
+
+            if (btnDownload) {
+                btnDownload.addEventListener('click', () => {
+                    const link = document.createElement('a');
+                    link.download = 'balloon.png';
+                    link.href = canvas.toDataURL('image/png');
+                    link.click();
+                });
+            }
 
             // Drag and drop
             window.addEventListener('dragover', (e) => {

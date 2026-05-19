@@ -9,7 +9,7 @@ export class BalloonizeEngine {
     constructor(canvas, imageSource, options = {}) {
         this.canvas = canvas;
         // Need webgl2 for float textures and texture() in glsl
-        this.gl = canvas.getContext('webgl2');
+        this.gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true });
         if (!this.gl) throw new Error("WebGL2 not supported");
 
         // Enable float textures for ping-pong buffer
