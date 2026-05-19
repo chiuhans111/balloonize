@@ -157,6 +157,61 @@ export class BalloonizeEngine {
     }
 
     initEvents() {
+        this.physicsParams = { tension: 0.5, damping: 0.75, diffusion: 0.15 };
+        this.lightingParams = { env: 0.8, az: -37, el: 37, specCore: 5.0, specGlow: 5.0, rim: 1.0 };
+        
+        const slTension = document.getElementById('slider-tension');
+        const slDamping = document.getElementById('slider-damping');
+        const slDiffusion = document.getElementById('slider-diffusion');
+        
+        const slEnv = document.getElementById('slider-env');
+        const slAz = document.getElementById('slider-azimuth');
+        const slEl = document.getElementById('slider-elevation');
+        const slSpecCore = document.getElementById('slider-spec-core');
+        const slSpecGlow = document.getElementById('slider-spec-glow');
+        const slRim = document.getElementById('slider-rim');
+        
+        if (slTension) {
+            const updateParams = () => {
+                this.physicsParams.tension = parseFloat(slTension.value);
+                this.physicsParams.damping = parseFloat(slDamping.value);
+                this.physicsParams.diffusion = parseFloat(slDiffusion.value);
+                
+                this.lightingParams.env = parseFloat(slEnv.value);
+                this.lightingParams.az = parseFloat(slAz.value);
+                this.lightingParams.el = parseFloat(slEl.value);
+                this.lightingParams.specCore = parseFloat(slSpecCore.value);
+                this.lightingParams.specGlow = parseFloat(slSpecGlow.value);
+                this.lightingParams.rim = parseFloat(slRim.value);
+
+                document.getElementById('val-tension').innerText = this.physicsParams.tension.toFixed(2);
+                document.getElementById('val-damping').innerText = this.physicsParams.damping.toFixed(2);
+                document.getElementById('val-diffusion').innerText = this.physicsParams.diffusion.toFixed(2);
+                
+                document.getElementById('val-env').innerText = this.lightingParams.env.toFixed(1);
+                document.getElementById('val-azimuth').innerText = this.lightingParams.az.toFixed(0);
+                document.getElementById('val-elevation').innerText = this.lightingParams.el.toFixed(0);
+                document.getElementById('val-spec-core').innerText = this.lightingParams.specCore.toFixed(1);
+                document.getElementById('val-spec-glow').innerText = this.lightingParams.specGlow.toFixed(1);
+                document.getElementById('val-rim').innerText = this.lightingParams.rim.toFixed(1);
+
+                this.wake();
+            };
+            slTension.addEventListener('input', updateParams);
+            slDamping.addEventListener('input', updateParams);
+            slDiffusion.addEventListener('input', updateParams);
+            
+            slEnv.addEventListener('input', updateParams);
+            slAz.addEventListener('input', updateParams);
+            slEl.addEventListener('input', updateParams);
+            slSpecCore.addEventListener('input', updateParams);
+            slSpecGlow.addEventListener('input', updateParams);
+            slRim.addEventListener('input', updateParams);
+            
+            // Call once immediately to sync JS state with DOM (fixes browser form caching)
+            updateParams();
+        }
+
         const updatePointer = (e) => {
             const rect = this.canvas.getBoundingClientRect();
             const x = (e.clientX - rect.left) / rect.width;
@@ -231,6 +286,8 @@ export class BalloonizeEngine {
                 texUnit++;
             } else if (Array.isArray(val)) {
                 if (val.length === 2) gl.uniform2fv(loc, val);
+                else if (val.length === 3) gl.uniform3fv(loc, val);
+                else if (val.length === 4) gl.uniform4fv(loc, val);
             } else if (typeof val === 'number') {
                 gl.uniform1f(loc, val);
             }
@@ -276,7 +333,10 @@ export class BalloonizeEngine {
             u_simState: this.simA,
             u_texelSize: [1.0 / this.simRes, 1.0 / this.simRes],
             u_pointerPos: this.pointerPos,
-            u_pointerForce: this.pointerForce
+            u_pointerForce: this.pointerForce,
+            u_tension: this.physicsParams ? this.physicsParams.tension : 0.5,
+            u_damping: this.physicsParams ? this.physicsParams.damping : 0.75,
+            u_diffusion: this.physicsParams ? this.physicsParams.diffusion : 0.15
         });
 
         if (this.isInteracting) {
@@ -299,11 +359,26 @@ export class BalloonizeEngine {
     }
 
     renderComposite() {
+        let lightDir = [-0.6, 0.6, 0.8]; // default if not set
+        if (this.lightingParams) {
+            let az = this.lightingParams.az * Math.PI / 180.0;
+            let el = this.lightingParams.el * Math.PI / 180.0;
+            let lx = Math.cos(el) * Math.sin(az);
+            let ly = Math.sin(el);
+            let lz = Math.cos(el) * Math.cos(az);
+            lightDir = [lx, ly, lz];
+        }
+
         this.runPass(this.compositeProgram, null, {
             u_imageTexture: this.imageTex,
             u_simState: this.simA,
             u_simTexelSize: [1.0 / this.simRes, 1.0 / this.simRes],
-            u_screenTexelSize: [1.0 / this.canvas.width, 1.0 / this.canvas.height]
+            u_screenTexelSize: [1.0 / this.canvas.width, 1.0 / this.canvas.height],
+            u_envIntensity: this.lightingParams ? this.lightingParams.env : 0.8,
+            u_lightDir: lightDir,
+            u_specCore: this.lightingParams ? this.lightingParams.specCore : 5.0,
+            u_specGlow: this.lightingParams ? this.lightingParams.specGlow : 5.0,
+            u_rim: this.lightingParams ? this.lightingParams.rim : 1.0
         });
     }
 }

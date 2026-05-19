@@ -40,6 +40,34 @@
             text-align: center;
             pointer-events: none;
         }
+
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            padding: 16px;
+            border-radius: 12px;
+            width: 256px;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .control-group label {
+            font-size: 12px;
+            display: flex;
+            justify-content: space-between;
+            color: #aaa;
+        }
+
+        .control-group input[type="range"] {
+            width: 100%;
+            accent-color: #ff4b8b;
+        }
     </style>
 </head>
 <body>
@@ -47,6 +75,50 @@
         <!-- High res output canvas, simulation is run at a lower res for performance -->
         <canvas id="glcanvas" width="512" height="512"></canvas>
         <div class="instructions">Click and drag over the shape to interact with the wave simulation.</div>
+        
+        <div class="controls">
+            <!-- Physics Controls -->
+            <div style="font-size:14px; font-weight:bold; margin-bottom:-4px;">Physics</div>
+            <div class="control-group">
+                <label><span>Wave Speed (Tension)</span> <span id="val-tension">0.50</span></label>
+                <input type="range" id="slider-tension" min="0.1" max="0.7" step="0.01" value="0.50">
+            </div>
+            <div class="control-group">
+                <label><span>Damping (Friction)</span> <span id="val-damping">0.75</span></label>
+                <input type="range" id="slider-damping" min="0.5" max="0.99" step="0.01" value="0.75">
+            </div>
+            <div class="control-group">
+                <label><span>Diffusion (Smoothness)</span> <span id="val-diffusion">0.15</span></label>
+                <input type="range" id="slider-diffusion" min="0.0" max="0.2" step="0.01" value="0.15">
+            </div>
+
+            <!-- Lighting Controls -->
+            <div style="font-size:14px; font-weight:bold; margin-top:8px; margin-bottom:-4px;">Lighting</div>
+            <div class="control-group">
+                <label><span>Env Intensity</span> <span id="val-env">0.8</span></label>
+                <input type="range" id="slider-env" min="0.0" max="3.0" step="0.1" value="0.8">
+            </div>
+            <div class="control-group">
+                <label><span>Light Azimuth</span> <span id="val-azimuth">-37</span></label>
+                <input type="range" id="slider-azimuth" min="-180" max="180" step="1" value="-37">
+            </div>
+            <div class="control-group">
+                <label><span>Light Elevation</span> <span id="val-elevation">37</span></label>
+                <input type="range" id="slider-elevation" min="-90" max="90" step="1" value="37">
+            </div>
+            <div class="control-group">
+                <label><span>Specular Core</span> <span id="val-spec-core">5.0</span></label>
+                <input type="range" id="slider-spec-core" min="0.0" max="10.0" step="0.1" value="5.0">
+            </div>
+            <div class="control-group">
+                <label><span>Specular Glow</span> <span id="val-spec-glow">5.0</span></label>
+                <input type="range" id="slider-spec-glow" min="0.0" max="10.0" step="0.1" value="5.0">
+            </div>
+            <div class="control-group">
+                <label><span>Rim Light</span> <span id="val-rim">1.0</span></label>
+                <input type="range" id="slider-rim" min="0.0" max="2.0" step="0.1" value="1.0">
+            </div>
+        </div>
     </div>
 
     <script type="module">

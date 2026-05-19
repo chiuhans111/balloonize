@@ -74,6 +74,9 @@ uniform sampler2D u_simState;
 uniform vec2 u_texelSize;
 uniform vec2 u_pointerPos;
 uniform float u_pointerForce;
+uniform float u_tension;
+uniform float u_damping;
+uniform float u_diffusion;
 
 in vec2 v_uv;
 out vec4 fragColor;
@@ -91,12 +94,17 @@ void main() {
     float u_up    = texture(u_simState, v_uv + vec2(0.0,  u_texelSize.y)).r;
     float u_down  = texture(u_simState, v_uv + vec2(0.0, -u_texelSize.y)).r;
     
+    // DIFFUSION: Kill high-frequency noise (ringing) by slightly averaging with neighbors
+    float localAvg = (u_left + u_right + u_up + u_down) * 0.25;
+    u_t = mix(u_t, localAvg, u_diffusion); 
+    
+    // Re-sample neighbors based on diffused center for stable laplacian
+    float laplacian = (u_left + u_right + u_up + u_down) - 4.0 * u_t;
+
     float u_ul = texture(u_simState, v_uv + vec2(-u_texelSize.x,  u_texelSize.y)).r;
     float u_ur = texture(u_simState, v_uv + vec2( u_texelSize.x,  u_texelSize.y)).r;
     float u_dl = texture(u_simState, v_uv + vec2(-u_texelSize.x, -u_texelSize.y)).r;
     float u_dr = texture(u_simState, v_uv + vec2( u_texelSize.x, -u_texelSize.y)).r;
-    
-    float laplacian = (u_left + u_right + u_up + u_down) - 4.0 * u_t;
 
     // --- GAUSSIAN CURVATURE REGULARIZER ---
     float z_xx = u_right + u_left - 2.0 * u_t;
@@ -104,13 +112,12 @@ void main() {
     float z_xy = (u_ur + u_dl - u_ul - u_dr) * 0.25;
 
     float K = (z_xx * z_yy) - (z_xy * z_xy);
-    float developablePenalty = clamp(abs(K) * 500.0, 0.0, 0.2);
+    float developablePenalty = clamp(abs(K) * 400.0, 0.0, 0.15); // Softened penalty
     
-    // Tuned: update faster, damp a bit
-    float tension = 0.5 * mask;        
+    float tension = u_tension * mask; 
     float pressure = 0.05 * mask;      
     
-    float damping = 0.82 - developablePenalty;              
+    float damping = u_damping - developablePenalty;              
     
     float acceleration = (tension * tension) * laplacian + pressure;
     float u_t_plus = 2.0 * u_t - u_t_minus + acceleration;
@@ -119,8 +126,9 @@ void main() {
     float brushRadius = 0.15;
     float distToPointer = length(v_uv - u_pointerPos);
     if (distToPointer < brushRadius && abs(u_pointerForce) > 0.0) {
-        float dentShape = pow(1.0 - (distToPointer / brushRadius), 2.0);
-        u_t_plus -= abs(u_pointerForce) * dentShape * mask * 2.0; 
+        float dentShape = smoothstep(brushRadius, 0.0, distToPointer);
+        // Softened impact to prevent violent energy injection
+        u_t_plus -= abs(u_pointerForce) * dentShape * mask * 0.8; 
     }
 
     float plastic_limit = pow(sdf, 0.35) * 6.5; 
@@ -137,6 +145,11 @@ uniform sampler2D u_imageTexture;
 uniform sampler2D u_simState;
 uniform vec2 u_simTexelSize;
 uniform vec2 u_screenTexelSize;
+uniform float u_envIntensity;
+uniform vec3 u_lightDir;
+uniform float u_specCore;
+uniform float u_specGlow;
+uniform float u_rim;
 
 in vec2 v_uv;
 out vec4 fragColor;
@@ -197,6 +210,37 @@ float getCreases(vec2 uv, float wave, float sdf, float mask, vec2 tangent) {
     return (ridge * 2.0 - 1.0) * buckleZone * 0.10; // Stronger creases
 }
 
+// Procedural Environment Reflection Map
+vec3 getProceduralEnvMap(vec3 r) {
+    float phi = atan(r.z, r.x); // -PI to PI
+    float theta = acos(r.y);    // 0 to PI
+    
+    vec3 col = vec3(0.0);
+    
+    // Studio Softbox Grid (Vertical rectangular light panels)
+    float panelGridX = smoothstep(0.9, 0.95, sin(phi * 4.0));
+    float panelGridY = smoothstep(-0.5, 0.8, r.y);
+    float panels = panelGridX * panelGridY;
+    col += vec3(2.5, 2.7, 3.0) * panels;
+    
+    // Sharp overhead studio light (cool color)
+    float overhead = smoothstep(0.85, 0.95, r.y);
+    col += vec3(1.0, 1.5, 2.0) * overhead;
+    
+    // Intense pinpoint LED lights
+    float leds = smoothstep(0.99, 0.999, sin(phi * 20.0) * sin(r.y * 15.0));
+    col += vec3(5.0, 4.0, 3.0) * leds * smoothstep(0.0, 1.0, r.y);
+    
+    // Warm lower horizon bounce
+    float horizon = smoothstep(0.1, 0.0, abs(r.y - 0.1));
+    col += vec3(0.8, 0.5, 0.2) * horizon * 0.4;
+    
+    // Base ambient room fill (slight blue gradient)
+    col += mix(vec3(0.02, 0.02, 0.04), vec3(0.1, 0.15, 0.2), smoothstep(-1.0, 1.0, r.y));
+    
+    return col;
+}
+
 void main() {
     vec4 state = sampleSmooth(u_simState, v_uv, u_simTexelSize);
     float mask = state.b; float sdf = state.a;
@@ -239,28 +283,28 @@ void main() {
     vec4 texColorRaw = texture(u_imageTexture, warpedUV);
     vec3 albedo = srgbToLinear(texColorRaw.rgb);
     
-    vec3 studioEnv = vec3(0.0);
+    vec3 studioEnv = getProceduralEnvMap(refVec) * u_envIntensity;
     
     // 1. Soft 45-Degree Main Light (Dual-Glow: Soft Core + Broad Bloom)
-    vec3 pointLightDir = normalize(vec3(-0.6, 0.6, 0.8));
+    vec3 pointLightDir = normalize(u_lightDir);
     float h_dot_l = max(dot(refVec, pointLightDir), 0.0);
     
-    float specPointCore = pow(h_dot_l, 150.0) * 3.0;   // Softened core reflection
-    float specPointGlow = pow(h_dot_l, 24.0) * 0.8;    // Broad soft gloss bloom scattering
+    float specPointCore = pow(h_dot_l, 150.0) * u_specCore;   
+    float specPointGlow = pow(h_dot_l, 24.0) * u_specGlow;    
     float specPoint = specPointCore; // Pass core intensity for additive bloom below
     studioEnv += vec3(1.0, 0.95, 0.9) * (specPointCore + specPointGlow);
     
-    // 2. Main Softbox Panel Reflection (Top-Right Angle)
+    // 2. The "Rim-like" Softbox Panels
     float softbox1 = smoothstep(0.7, 0.95, dot(refVec, normalize(vec3(0.7, 0.5, 0.4))));
-    studioEnv += vec3(2.0, 1.8, 1.5) * softbox1;
+    studioEnv += vec3(2.0, 1.8, 1.5) * softbox1 * u_envIntensity;
     
-    // 3. Cool Floor Bounce (Bottom Hemispherical Lighting)
     float softbox2 = smoothstep(0.3, 0.9, dot(refVec, normalize(vec3(0.0, -0.9, 0.4))));
-    studioEnv += vec3(0.3, 0.5, 0.8) * softbox2;
+    studioEnv += vec3(0.3, 0.5, 0.8) * softbox2 * u_envIntensity;
     
-    // 4. Pure Analytical Rim Edge Glow (High acceptance angle)
+    // 3. Pure Analytical Rim Edge Glow (High acceptance angle)
     float rimGlow = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
-    studioEnv += vec3(0.8, 0.9, 1.0) * rimGlow * smoothstep(-0.2, 1.0, refVec.y) * 0.5;
+    // Calculate rim color but do not add to studioEnv, add it later directly
+    vec3 rimColor = vec3(0.8, 0.9, 1.0) * rimGlow * u_rim * 8.0;
 
     // High-contrast deep base shadows
     float ndl = max(dot(normal, pointLightDir), 0.0);
@@ -276,6 +320,9 @@ void main() {
     
     // Add direct specular light bloom back onto the mesh surface for visual pop
     color += vec3(2.0) * specPoint * albedo;
+    
+    // Explicitly add rim light so it is independent of Fresnel mixing
+    color += rimColor;
 
     color = linearToSrgb(acesFilm(color));
 
