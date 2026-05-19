@@ -157,8 +157,8 @@ export class BalloonizeEngine {
     }
 
     initEvents() {
-        this.physicsParams = { tension: 0.5, damping: 0.75, diffusion: 0.15 };
-        this.lightingParams = { env: 0.8, az: -37, el: 37, specCore: 5.0, specGlow: 5.0, rim: 1.0 };
+        this.physicsParams = { tension: 0.6, damping: 0.75, diffusion: 0.12 };
+        this.lightingParams = { env: 1.0, az: -45, el: 50, specCore: 10.0, specGlow: 5.0, rim: 0.6 };
         
         const slTension = document.getElementById('slider-tension');
         const slDamping = document.getElementById('slider-damping');
@@ -363,9 +363,14 @@ export class BalloonizeEngine {
         if (this.lightingParams) {
             let az = this.lightingParams.az * Math.PI / 180.0;
             let el = this.lightingParams.el * Math.PI / 180.0;
-            let lx = Math.cos(el) * Math.sin(az);
-            let ly = Math.sin(el);
-            let lz = Math.cos(el) * Math.cos(az);
+            
+            // Azimuth acts like a clock on the XY plane
+            // Elevation pulls the light out of the screen (Z axis)
+            let r_xy = Math.cos(el);
+            let lx = Math.sin(az) * r_xy;
+            let ly = Math.cos(az) * r_xy;
+            let lz = Math.sin(el);
+            
             lightDir = [lx, ly, lz];
         }
 
@@ -374,11 +379,12 @@ export class BalloonizeEngine {
             u_simState: this.simA,
             u_simTexelSize: [1.0 / this.simRes, 1.0 / this.simRes],
             u_screenTexelSize: [1.0 / this.canvas.width, 1.0 / this.canvas.height],
-            u_envIntensity: this.lightingParams ? this.lightingParams.env : 0.8,
+            u_envIntensity: this.lightingParams ? this.lightingParams.env : 1.0,
             u_lightDir: lightDir,
-            u_specCore: this.lightingParams ? this.lightingParams.specCore : 5.0,
+            u_specCore: this.lightingParams ? this.lightingParams.specCore : 10.0,
             u_specGlow: this.lightingParams ? this.lightingParams.specGlow : 5.0,
-            u_rim: this.lightingParams ? this.lightingParams.rim : 1.0
+            u_rim: this.lightingParams ? this.lightingParams.rim : 0.6,
+            u_diffusion: this.physicsParams ? this.physicsParams.diffusion : 0.12
         });
     }
 }

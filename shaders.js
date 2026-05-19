@@ -121,6 +121,12 @@ void main() {
     
     float acceleration = (tension * tension) * laplacian + pressure;
     float u_t_plus = 2.0 * u_t - u_t_minus + acceleration;
+    
+    // Low-pass spatial filter blend executed directly inside the solver pass
+    // to instantly extinguish micro-scale numerical grid snapping noise
+    float spatialSmooth = (u_left + u_right + u_up + u_down) * 0.25;
+    u_t_plus = mix(u_t_plus, spatialSmooth, u_diffusion * 0.5); // use diffusion to control numerical solver damping as well!
+    
     u_t_plus *= damping;
 
     float brushRadius = 0.15;
@@ -150,6 +156,7 @@ uniform vec3 u_lightDir;
 uniform float u_specCore;
 uniform float u_specGlow;
 uniform float u_rim;
+uniform float u_diffusion;
 
 in vec2 v_uv;
 out vec4 fragColor;
@@ -175,9 +182,10 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv, vec2 texSize) {
 }
 
 float calcTotalDepth(float wave, float sdf) {
-    float baseInflation = 2.8; 
+    float baseInflation = 2.4; // adjusted to keep max height roughly the same
     float safeSDF = max(sdf, 0.0); 
-    return wave + pow(safeSDF, 0.4) * baseInflation;
+    // Increased exponent from 0.4 to 0.55 for a rounder, less flat-top profile
+    return wave + pow(safeSDF, 0.55) * baseInflation;
 }
 
 float calcSeamDepth(vec2 uv, float sdf) {
@@ -217,23 +225,29 @@ vec3 getProceduralEnvMap(vec3 r) {
     
     vec3 col = vec3(0.0);
     
-    // Studio Softbox Grid (Vertical rectangular light panels)
-    float panelGridX = smoothstep(0.9, 0.95, sin(phi * 4.0));
-    float panelGridY = smoothstep(-0.5, 0.8, r.y);
-    float panels = panelGridX * panelGridY;
-    col += vec3(2.5, 2.7, 3.0) * panels;
+    // 1. Intricate Studio Window (Left Side)
+    // Create panes and mullions (fins)
+    float winX = smoothstep(0.4, 0.42, sin(phi * 6.0));
+    float winY = smoothstep(0.4, 0.42, sin(r.y * 12.0));
+    float windowBounds = smoothstep(0.6, 0.7, r.x) * smoothstep(0.0, 0.3, r.y);
+    float window = winX * winY * windowBounds;
+    col += vec3(3.0, 3.2, 3.5) * window;
     
-    // Sharp overhead studio light (cool color)
+    // 2. High-Tech Ceiling Array (Overhead)
+    // Multiple thin fluorescent tubes
+    float ceilingTubes = smoothstep(0.8, 0.95, sin(r.x * 40.0));
     float overhead = smoothstep(0.85, 0.95, r.y);
-    col += vec3(1.0, 1.5, 2.0) * overhead;
+    col += vec3(1.5, 2.0, 2.5) * ceilingTubes * overhead * 2.0;
     
-    // Intense pinpoint LED lights
-    float leds = smoothstep(0.99, 0.999, sin(phi * 20.0) * sin(r.y * 15.0));
-    col += vec3(5.0, 4.0, 3.0) * leds * smoothstep(0.0, 1.0, r.y);
+    // 3. Right Side Softbox with distinct LED grid matrix
+    float ledGridX = smoothstep(0.5, 0.9, sin(phi * 40.0));
+    float ledGridY = smoothstep(0.5, 0.9, sin(r.y * 40.0));
+    float softboxBounds = smoothstep(0.6, 0.8, -r.x) * smoothstep(-0.2, 0.5, r.y);
+    col += vec3(2.0, 1.8, 1.5) * ledGridX * ledGridY * softboxBounds * 2.5;
     
-    // Warm lower horizon bounce
-    float horizon = smoothstep(0.1, 0.0, abs(r.y - 0.1));
-    col += vec3(0.8, 0.5, 0.2) * horizon * 0.4;
+    // 4. Studio environment ambient bounce (dark, slightly warm floor)
+    float horizon = smoothstep(0.1, 0.0, abs(r.y + 0.2));
+    col += vec3(0.5, 0.4, 0.3) * horizon;
     
     // Base ambient room fill (slight blue gradient)
     col += mix(vec3(0.02, 0.02, 0.04), vec3(0.1, 0.15, 0.2), smoothstep(-1.0, 1.0, r.y));
@@ -245,11 +259,15 @@ void main() {
     vec4 state = sampleSmooth(u_simState, v_uv, u_simTexelSize);
     float mask = state.b; float sdf = state.a;
     
-    // 4-way cross sampling for low-pass box filtering
-    vec4 st_left  = sampleSmooth(u_simState, v_uv - vec2(u_simTexelSize.x, 0.0), u_simTexelSize);
-    vec4 st_right = sampleSmooth(u_simState, v_uv + vec2(u_simTexelSize.x, 0.0), u_simTexelSize);
-    vec4 st_up    = sampleSmooth(u_simState, v_uv + vec2(0.0, u_simTexelSize.y), u_simTexelSize);
-    vec4 st_down  = sampleSmooth(u_simState, v_uv - vec2(0.0, u_simTexelSize.y), u_simTexelSize);
+    // Widen the sampling offset based on the Diffusion slider to smooth out SDF grid artifacts
+    float offsetMult = 1.0 + u_diffusion * 25.0;
+    vec2 offset = u_simTexelSize * offsetMult;
+    
+    // 4-way cross sampling for low-pass box filtering and normal calculation
+    vec4 st_left  = sampleSmooth(u_simState, v_uv - vec2(offset.x, 0.0), u_simTexelSize);
+    vec4 st_right = sampleSmooth(u_simState, v_uv + vec2(offset.x, 0.0), u_simTexelSize);
+    vec4 st_up    = sampleSmooth(u_simState, v_uv + vec2(0.0, offset.y), u_simTexelSize);
+    vec4 st_down  = sampleSmooth(u_simState, v_uv - vec2(0.0, offset.y), u_simTexelSize);
     
     // Low-pass filtered wave channel to keep surface texture perfectly smooth
     float wave = (state.r + st_left.r + st_right.r + st_up.r + st_down.r) * 0.2;
@@ -260,18 +278,20 @@ void main() {
     vec2 warpedUV = v_uv - bleedOffset;
 
     // Build the clean composite depth field
-    float h_left  = calcTotalDepth(st_left.r,  st_left.a)  + calcSeamDepth(warpedUV - vec2(u_simTexelSize.x, 0.0), st_left.a);
-    float h_right = calcTotalDepth(st_right.r, st_right.a) + calcSeamDepth(warpedUV + vec2(u_simTexelSize.x, 0.0), st_right.a);
-    float h_up    = calcTotalDepth(st_up.r,    st_up.a)    + calcSeamDepth(warpedUV + vec2(0.0, u_simTexelSize.y), st_up.a);
-    float h_down  = calcTotalDepth(st_down.r,  st_down.a)  + calcSeamDepth(warpedUV - vec2(0.0, u_simTexelSize.y), st_down.a);
+    float h_left  = calcTotalDepth(st_left.r,  st_left.a)  + calcSeamDepth(warpedUV - vec2(offset.x, 0.0), st_left.a);
+    float h_right = calcTotalDepth(st_right.r, st_right.a) + calcSeamDepth(warpedUV + vec2(offset.x, 0.0), st_right.a);
+    float h_up    = calcTotalDepth(st_up.r,    st_up.a)    + calcSeamDepth(warpedUV + vec2(0.0, offset.y), st_up.a);
+    float h_down  = calcTotalDepth(st_down.r,  st_down.a)  + calcSeamDepth(warpedUV - vec2(0.0, offset.y), st_down.a);
     
     float c_left  = getCreases(v_uv - vec2(u_simTexelSize.x, 0.0), wave, sdf, mask, tangent);
     float c_right = getCreases(v_uv + vec2(u_simTexelSize.x, 0.0), wave, sdf, mask, tangent);
     float c_up    = getCreases(v_uv + vec2(0.0, u_simTexelSize.y), wave, sdf, mask, tangent);
     float c_down  = getCreases(v_uv - vec2(0.0, u_simTexelSize.y), wave, sdf, mask, tangent);
     
-    float dZdx = ((h_right - h_left) * 0.5) + ((c_right - c_left) * 0.5); 
-    float dZdy = ((h_up - h_down) * 0.5) + ((c_up - c_down) * 0.5);
+    // Normalize derivatives by the sampling width to maintain correct macro-slope while killing micro-noise,
+    // but leave the micro-creases unaffected so they stay crisp and strong.
+    float dZdx = ((h_right - h_left) / (2.0 * offsetMult)) + ((c_right - c_left) * 0.5); 
+    float dZdy = ((h_up - h_down) / (2.0 * offsetMult)) + ((c_up - c_down) * 0.5);
     
     // Solid, highly inflated normal distribution
     vec3 normal = normalize(vec3(-dZdx, -dZdy, 0.25));
@@ -301,10 +321,10 @@ void main() {
     float softbox2 = smoothstep(0.3, 0.9, dot(refVec, normalize(vec3(0.0, -0.9, 0.4))));
     studioEnv += vec3(0.3, 0.5, 0.8) * softbox2 * u_envIntensity;
     
-    // 3. Pure Analytical Rim Edge Glow (High acceptance angle)
-    float rimGlow = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
+    // 3. Pure Analytical Rim Edge Glow (Widened acceptance angle)
+    float rimGlow = pow(1.0 - max(dot(normal, viewDir), 0.0), 1.5); // reduced from 3.0 to wrap much further around sides
     // Calculate rim color but do not add to studioEnv, add it later directly
-    vec3 rimColor = vec3(0.8, 0.9, 1.0) * rimGlow * u_rim * 8.0;
+    vec3 rimColor = vec3(0.8, 0.9, 1.0) * rimGlow * u_rim * 4.0; // reduced multiplier since it covers more area
 
     // High-contrast deep base shadows
     float ndl = max(dot(normal, pointLightDir), 0.0);
