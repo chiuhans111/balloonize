@@ -64,7 +64,7 @@
             align-items: center;
             gap: 20px;
             width: 100%;
-            max-width: 400px;
+            max-width: 580px;
             padding: 24px;
             box-sizing: border-box;
         }
@@ -81,9 +81,6 @@
             font-weight: 700;
             margin: 0 0 4px 0;
             letter-spacing: -0.5px;
-            background: linear-gradient(135deg, var(--accent-color), #ff527b);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
         }
 
         .header .subtitle {
@@ -106,13 +103,15 @@
 
         .header h1 a {
             text-decoration: none;
-            color: inherit;
+            background: linear-gradient(135deg, var(--accent-color), #ff527b);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
             display: inline-block;
-            transition: opacity 0.2s ease;
+            transition: transform 0.2s ease;
         }
 
         .header h1 a:hover {
-            opacity: 0.85;
+            transform: scale(1.02);
         }
 
         .header .subtitle a {
@@ -127,8 +126,8 @@
 
         .canvas-wrapper {
             position: relative;
-            width: 360px;
-            height: 360px;
+            width: 540px;
+            height: 540px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -152,9 +151,7 @@
             user-select: none;
         }
 
-        canvas:hover {
-            transform: scale(1.01);
-        }
+
 
         .instructions {
             color: var(--text-muted);

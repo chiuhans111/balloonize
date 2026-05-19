@@ -17,6 +17,7 @@ uniform vec2 u_texelSize;
 uniform vec2 u_imageTexelSize;
 uniform float u_gradientThreshold;
 uniform float u_hasTransparency;
+uniform float u_isCleanupPass;
 
 in vec2 v_uv;
 out vec4 fragColor;
@@ -60,7 +61,9 @@ void main() {
     
     if (edgeProximity > 0.0) {
         // Trim isolated noise dots (morphological cleanup)
-        if (m_l + m_r + m_u + m_d <= 1.0) {
+        // Raise threshold to 2.0 during final cleanup passes to dissolve noise clusters and smooth edges
+        float trimThreshold = (u_isCleanupPass > 0.5) ? 2.0 : 1.0;
+        if (m_l + m_r + m_u + m_d <= trimThreshold) {
             fragColor = vec4(0.0, 0.0, 0.0, 0.0);
             return;
         }
@@ -151,9 +154,14 @@ void main() {
     
     float tension = u_tension * mask; 
     float pressure = u_pressure * mask;      
-    float damping = u_damping - developablePenalty;              
+    // Scale down damping near the boundary (low SDF) to absorb wave energy at the sides
+    float boundaryFade = smoothstep(0.0, 0.08, sdf);
+    float damping = u_damping - developablePenalty;
+    damping = mix(damping * 0.8, damping, boundaryFade);
     
-    float acceleration = (tension * tension) * laplacian + pressure;
+    // Enforce 2D CFL stability condition: wave speed must be <= 1.0 / sqrt(2.0) ≈ 0.7071
+    float c = tension * 0.7071;
+    float acceleration = (c * c) * laplacian + pressure;
     float u_t_plus = 2.0 * u_t - u_t_minus + acceleration;
     
     // Low-pass filter for numerical stability
@@ -388,6 +396,17 @@ void main() {
     vec3 pageBg = vec3(0.051, 0.051, 0.067);
     vec4 origTex = texture(u_imageTexture, v_uv);
     vec3 bgColor = mix(pageBg, origTex.rgb, origTex.a); 
+    
+    // Sample simulation mask at 1.5 screen pixels offset to create a very tight 1.5px border shadow
+    float m1 = texture(u_simState, v_uv + vec2(-u_screenTexelSize.x * 1.5, 0.0)).b;
+    float m2 = texture(u_simState, v_uv + vec2( u_screenTexelSize.x * 1.5, 0.0)).b;
+    float m3 = texture(u_simState, v_uv + vec2(0.0, -u_screenTexelSize.y * 1.5)).b;
+    float m4 = texture(u_simState, v_uv + vec2(0.0,  u_screenTexelSize.y * 1.5)).b;
+    float avgMask = (m1 + m2 + m3 + m4) * 0.25;
+    float borderShadow = avgMask * (1.0 - mask) * currentInflation;
+    
+    // Apply shadow at 35% opacity
+    bgColor = mix(bgColor, vec3(0.0), borderShadow * 0.35);
     
     // Scanner ring entrance animation
     vec2 centerUV = vec2(0.5, 0.5);

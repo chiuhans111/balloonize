@@ -170,7 +170,7 @@ export class BalloonizeEngine {
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
                 gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 
-                const maxCanvasDim = 512;
+                const maxCanvasDim = 768;
                 const aspect = img.width / img.height;
                 if (aspect >= 1.0) {
                     this.canvas.width = maxCanvasDim;
@@ -403,6 +403,23 @@ export class BalloonizeEngine {
         this.fboB = tempFbo;
     }
 
+    getUniformLocationCached(program, name) {
+        if (!this.uniformLocs) {
+            this.uniformLocs = new Map();
+        }
+        let programLocs = this.uniformLocs.get(program);
+        if (!programLocs) {
+            programLocs = new Map();
+            this.uniformLocs.set(program, programLocs);
+        }
+        let loc = programLocs.get(name);
+        if (loc === undefined) {
+            loc = this.gl.getUniformLocation(program, name);
+            programLocs.set(name, loc);
+        }
+        return loc;
+    }
+
     runPass(program, destFbo, uniforms = {}) {
         const gl = this.gl;
         gl.useProgram(program);
@@ -417,7 +434,7 @@ export class BalloonizeEngine {
 
         let texUnit = 0;
         for (const [name, val] of Object.entries(uniforms)) {
-            const loc = gl.getUniformLocation(program, name);
+            const loc = this.getUniformLocationCached(program, name);
             if (!loc) continue;
 
             if (val instanceof WebGLTexture) {
@@ -442,13 +459,15 @@ export class BalloonizeEngine {
 
         // Run 150 passes to erode mask inward to shape boundaries and build SDF
         for (let i = 0; i < 150; i++) {
+            const isCleanup = (i >= 147) ? 1.0 : 0.0;
             this.runPass(this.trimProgram, this.fboB, {
                 u_imageTexture: this.imageTex,
                 u_simState: this.simA,
                 u_texelSize: [1.0 / this.simRes, 1.0 / this.simRes],
                 u_imageTexelSize: [1.0 / this.loadedImage.width, 1.0 / this.loadedImage.height],
                 u_gradientThreshold: gpuThreshold,
-                u_hasTransparency: this.hasTransparency ? 1.0 : 0.0
+                u_hasTransparency: this.hasTransparency ? 1.0 : 0.0,
+                u_isCleanupPass: isCleanup
             });
             this.swapPingPong();
         }
@@ -648,37 +667,34 @@ export class BalloonizeEngine {
             ratios.push((size - qTail) / size);
         }
 
-        // 5. Find the transition point (maximum jump in mask ratio)
-        let maxJump = 0;
-        let maxJumpIdx = -1;
-        for (let i = 1; i < candidates.length; i++) {
-            const jump = ratios[i] - ratios[i - 1];
-            if (jump > maxJump) {
-                maxJump = jump;
-                maxJumpIdx = i;
-            }
-        }
-
+        // Find the plateau of minimal sensitivity, prioritizing mask sizes around 40-60% (closer to 60% preferred)
+        let bestScore = Infinity;
         let bestThreshold = 0.75;
 
-        if (maxJump > 0.05 && maxJumpIdx !== -1) {
-            bestThreshold = Math.min(0.98, candidates[maxJumpIdx] + 0.04);
-            console.log(`Auto-threshold tuned via transition jump detection: ${bestThreshold.toFixed(2)} (jump: ${maxJump.toFixed(2)} at ${candidates[maxJumpIdx].toFixed(2)})`);
-        } else {
-            let minSensitivity = Infinity;
-            for (let i = 1; i < candidates.length - 1; i++) {
-                const ratio = ratios[i];
-                if (ratio >= 0.15 && ratio <= 0.85) {
-                    const sensitivity = Math.abs(ratios[i + 1] - ratios[i - 1]);
-                    if (sensitivity < minSensitivity) {
-                        minSensitivity = sensitivity;
-                        bestThreshold = candidates[i];
-                    }
+        for (let i = 1; i < candidates.length - 1; i++) {
+            const ratio = ratios[i];
+            // Ignore completely empty or full masks
+            if (ratio >= 0.05 && ratio <= 0.95) {
+                const sensitivity = Math.abs(ratios[i + 1] - ratios[i - 1]);
+                
+                // Calculate penalty based on target range of 40% to 60% (preferring 60%)
+                let ratioPenalty = Math.abs(ratio - 0.60);
+                if (ratio < 0.40) {
+                    ratioPenalty += (0.40 - ratio) * 4.0; // Penalty grows for going below 40%
+                } else if (ratio > 0.60) {
+                    ratioPenalty += (ratio - 0.60) * 4.0; // Penalty grows for going above 60%
+                }
+                
+                // Score combines sensitivity and ratio target proximity
+                const score = sensitivity + ratioPenalty * 0.5;
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestThreshold = candidates[i];
                 }
             }
-            console.log(`Auto-threshold tuned via sensitivity minimization: ${bestThreshold.toFixed(2)}`);
         }
 
+        console.log(`Auto-threshold tuned via sensitivity minimization: ${bestThreshold.toFixed(2)} (best score: ${bestScore.toFixed(4)})`);
         return bestThreshold;
     }
 
