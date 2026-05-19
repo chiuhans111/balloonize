@@ -8,11 +8,11 @@ import {
 export class BalloonizeEngine {
     constructor(canvas, imageSource, options = {}) {
         this.canvas = canvas;
-        // Need webgl2 for float textures and texture() in glsl
+        // WebGL2 is required for float textures and texture() in GLSL
         this.gl = canvas.getContext('webgl2', { preserveDrawingBuffer: true });
         if (!this.gl) throw new Error("WebGL2 not supported");
 
-        // Enable float textures for ping-pong buffer
+        // Enable float textures for ping-pong buffering
         if (!this.gl.getExtension('EXT_color_buffer_float')) {
             console.warn("EXT_color_buffer_float not supported");
         }
@@ -119,15 +119,15 @@ export class BalloonizeEngine {
 
     initTextures() {
         const gl = this.gl;
-        // Ping-Pong pair for SimulationPingPong (RGBA32F, 256x256)
+        // Ping-Pong pair for Simulation (RGBA32F)
         // R: Current Scalar Wave (u_t), G: Previous (u_t-1), B: Mask, A: SDF
         this.simA = this.createTexture(this.simRes, this.simRes, gl.RGBA32F, gl.RGBA, gl.FLOAT);
         this.simB = this.createTexture(this.simRes, this.simRes, gl.RGBA32F, gl.RGBA, gl.FLOAT);
         
-        // ImageTexture (RGBA8) - Use LINEAR filtering to smooth out noise on hardware
+        // Image Texture (RGBA8) - Use LINEAR filtering to smooth out noise
         this.imageTex = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, this.imageTex);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255,255,255,255]));
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -199,11 +199,9 @@ export class BalloonizeEngine {
     }
 
     initEvents() {
-        const slEffect = document.getElementById('slider-effect');
         const slTension = document.getElementById('slider-tension');
         const slDamping = document.getElementById('slider-damping');
         const slDiffusion = document.getElementById('slider-diffusion');
-        
         const slMaskThreshold = document.getElementById('slider-mask-threshold');
 
         const slEnv = document.getElementById('slider-env');
@@ -214,7 +212,6 @@ export class BalloonizeEngine {
         const slRim = document.getElementById('slider-rim');
         
         if (slTension) {
-            if (slEffect) slEffect.value = this.inflationDepth;
             slTension.value = this.physicsParams.tension;
             slDamping.value = this.physicsParams.damping;
             slDiffusion.value = this.physicsParams.diffusion;
@@ -229,7 +226,6 @@ export class BalloonizeEngine {
             slRim.value = this.lightingParams.rim;
 
             const updateParams = () => {
-                if (slEffect) this.inflationDepth = parseFloat(slEffect.value);
                 this.physicsParams.tension = parseFloat(slTension.value);
                 this.physicsParams.damping = parseFloat(slDamping.value);
                 this.physicsParams.diffusion = parseFloat(slDiffusion.value);
@@ -243,7 +239,6 @@ export class BalloonizeEngine {
                 this.lightingParams.specGlow = parseFloat(slSpecGlow.value);
                 this.lightingParams.rim = parseFloat(slRim.value);
 
-                const elEf = document.getElementById('val-effect');
                 const elT = document.getElementById('val-tension');
                 const elD = document.getElementById('val-damping');
                 const elDi = document.getElementById('val-diffusion');
@@ -256,7 +251,6 @@ export class BalloonizeEngine {
                 const elSG = document.getElementById('val-spec-glow');
                 const elR = document.getElementById('val-rim');
 
-                if (elEf) elEf.innerText = this.inflationDepth.toFixed(2);
                 if (elT) elT.innerText = this.physicsParams.tension.toFixed(2);
                 if (elD) elD.innerText = this.physicsParams.damping.toFixed(2);
                 if (elDi) elDi.innerText = this.physicsParams.diffusion.toFixed(2);
@@ -267,8 +261,6 @@ export class BalloonizeEngine {
                 if (elEl) elEl.innerText = this.lightingParams.el.toFixed(0);
                 if (elSC) elSC.innerText = this.lightingParams.specCore.toFixed(1);
                 if (elSG) elSG.innerText = this.lightingParams.specGlow.toFixed(1);
-                if (elR) elR.innerText = this.lightingParams.rim.toFixed(1);
-
                 if (elR) elR.innerText = this.lightingParams.rim.toFixed(1);
 
                 this.wake();
@@ -286,7 +278,7 @@ export class BalloonizeEngine {
                 });
                 slMaskThreshold.addEventListener('change', () => {
                     this.isDraggingMask = false;
-                    this.entranceProgress = 0.0; // Reset pop animation to trigger from start
+                    this.entranceProgress = 0.0;
                     this.wake();
                 });
             }
@@ -297,9 +289,8 @@ export class BalloonizeEngine {
             slSpecCore.addEventListener('input', updateParams);
             slSpecGlow.addEventListener('input', updateParams);
             slRim.addEventListener('input', updateParams);
-            if (slEffect) slEffect.addEventListener('input', updateParams);
             
-            // Call once immediately to sync JS state with DOM (fixes browser form caching)
+            // Sync initial state with DOM
             updateParams();
             this.boundUpdateParams = updateParams;
         }
@@ -314,7 +305,7 @@ export class BalloonizeEngine {
         this.boundPointerDown = (e) => {
             this.canvas.setPointerCapture(e.pointerId);
             updatePointer(e);
-            this.pointerForce = 1.0; // Stronger click (force x2)
+            this.pointerForce = 1.0;
             this.isInteracting = true;
             this.wake();
         };
@@ -322,9 +313,9 @@ export class BalloonizeEngine {
         this.boundPointerMove = (e) => {
             updatePointer(e);
             if (this.isInteracting) {
-                this.pointerForce = 1.0; // Dragging state (deep)
+                this.pointerForce = 1.0;
             } else {
-                this.pointerForce = 0.5; // Hover state (used to be click state)
+                this.pointerForce = 0.5;
             }
             this.wake();
         };
@@ -332,7 +323,7 @@ export class BalloonizeEngine {
         this.boundPointerUp = (e) => {
             this.canvas.releasePointerCapture(e.pointerId);
             this.isInteracting = false;
-            this.pointerForce = 0.5; // Revert to hover state
+            this.pointerForce = 0.5;
             this.wake();
         };
 
@@ -350,15 +341,12 @@ export class BalloonizeEngine {
     }
 
     destroy() {
-        // Cancel animation loop
         if (this.rafId) {
             cancelAnimationFrame(this.rafId);
             this.rafId = null;
         }
 
-        // Remove event listeners
         if (this.boundUpdateParams) {
-            const slEffect = document.getElementById('slider-effect');
             const slTension = document.getElementById('slider-tension');
             const slDamping = document.getElementById('slider-damping');
             const slDiffusion = document.getElementById('slider-diffusion');
@@ -370,7 +358,6 @@ export class BalloonizeEngine {
             const slRim = document.getElementById('slider-rim');
             
             if (slTension) {
-                if (slEffect) slEffect.removeEventListener('input', this.boundUpdateParams);
                 slTension.removeEventListener('input', this.boundUpdateParams);
                 slDamping.removeEventListener('input', this.boundUpdateParams);
                 slDiffusion.removeEventListener('input', this.boundUpdateParams);
@@ -388,7 +375,6 @@ export class BalloonizeEngine {
         if (this.boundPointerUp) this.canvas.removeEventListener('pointerup', this.boundPointerUp);
         if (this.boundPointerLeave) this.canvas.removeEventListener('pointerleave', this.boundPointerLeave);
 
-        // Delete WebGL objects to prevent GPU memory leaks
         const gl = this.gl;
         if (gl) {
             gl.deleteProgram(this.trimProgram);
@@ -454,7 +440,7 @@ export class BalloonizeEngine {
     startTrimLoop() {
         const gpuThreshold = (1.0 - this.maskThreshold) * 0.6;
 
-        // Run 150 passes to erode the mask inward to the shape boundaries and build SDF
+        // Run 150 passes to erode mask inward to shape boundaries and build SDF
         for (let i = 0; i < 150; i++) {
             this.runPass(this.trimProgram, this.fboB, {
                 u_imageTexture: this.imageTex,
@@ -467,11 +453,9 @@ export class BalloonizeEngine {
             this.swapPingPong();
         }
         
-        // HARD FAILSAFE: Lock the simulation state once the boundary is baked!
         this.isBaked = true;
         
-        // CRITICAL FIX: Force simB to perfectly match simA before the interactive wave loop starts
-        // We run a dummy pass that just copies the state over.
+        // Copy state to simB to initialize before wave loop starts
         this.runPass(this.waveProgram, this.fboB, {
             u_simState: this.simA,
             u_texelSize: [1.0 / this.simRes, 1.0 / this.simRes],
@@ -491,14 +475,11 @@ export class BalloonizeEngine {
     }
 
     loop() {
-        if (this.entranceProgress === undefined) this.entranceProgress = 1.0;
-
         let currentPressure = 0.05;
         if (this.entranceProgress < 1.0) {
-            this.entranceProgress = Math.min(1.0, this.entranceProgress + 0.0125); // Pop breath and scan wave over 80 frames (~1.3s)
+            this.entranceProgress = Math.min(1.0, this.entranceProgress + 0.0125);
             currentPressure = 0.05 * this.entranceProgress;
-            
-            this.consecutiveIdleFrames = 0; // Prevent sleeping during the pop transition
+            this.consecutiveIdleFrames = 0; // Keep awake during transition
         }
 
         // 1. Wave Solver Pass
@@ -524,7 +505,7 @@ export class BalloonizeEngine {
         // 2. Composite Pass
         this.renderComposite();
 
-        // Zero-Idle Sleep Engine: pause loop if resting AND the pop breath is finished (entranceProgress === 1.0)
+        // Pause loop if resting and the pop transition is complete
         if (this.consecutiveIdleFrames > 120 && this.entranceProgress >= 1.0) {
             this.rafId = null;
         } else {
@@ -533,13 +514,11 @@ export class BalloonizeEngine {
     }
 
     renderComposite() {
-        let lightDir = [-0.6, 0.6, 0.8]; // default if not set
+        let lightDir = [-0.6, 0.6, 0.8];
         if (this.lightingParams) {
             let az = this.lightingParams.az * Math.PI / 180.0;
             let el = this.lightingParams.el * Math.PI / 180.0;
             
-            // Azimuth acts like a clock on the XY plane
-            // Elevation pulls the light out of the screen (Z axis)
             let r_xy = Math.cos(el);
             let lx = Math.sin(az) * r_xy;
             let ly = Math.cos(az) * r_xy;
@@ -579,7 +558,7 @@ export class BalloonizeEngine {
             rawLum[i] = 0.299 * r + 0.587 * g + 0.114 * b;
         }
 
-        // 2. Smooth luminance with a 3x3 box filter to suppress high-frequency noise
+        // 2. Smooth luminance with a 3x3 box filter to suppress noise
         const lum = new Float32Array(size);
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
@@ -602,29 +581,22 @@ export class BalloonizeEngine {
             }
         }
 
-        // 3. Compute gradients matching the shader exactly (using a noise-resistant 2-pixel step)
+        // 3. Compute gradients (using a symmetrical 2-pixel step)
         const grad = new Float32Array(size);
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
                 const idx = y * width + x;
                 const l_left  = lum[y * width + Math.max(0, x - 2)];
-                const l_right = lum[y * width + Math.min(width - 1, x + 1)]; // Wait, let's keep the step symmetrical!
-                // Ah, let's use symmetrical x-2 and x+2, and y-2 and y+2:
-                // l_left  = lum[y * width + Math.max(0, x - 2)]
-                // l_right = lum[y * width + Math.min(width - 1, x + 2)]
-                // l_up    = lum[Math.min(height - 1, y + 2) * width + x]
-                // l_down  = lum[Math.max(0, y - 2) * width + x]
-                // Let's write it down:
-                const l_left_2  = lum[y * width + Math.max(0, x - 2)];
-                const l_right_2 = lum[y * width + Math.min(width - 1, x + 2)];
-                const l_up_2    = lum[Math.min(height - 1, y + 2) * width + x];
-                const l_down_2  = lum[Math.max(0, y - 2) * width + x];
-                const dx = l_left_2 - l_right_2;
-                const dy = l_down_2 - l_up_2;
+                const l_right = lum[y * width + Math.min(width - 1, x + 2)];
+                const l_up    = lum[Math.min(height - 1, y + 2) * width + x];
+                const l_down  = lum[Math.max(0, y - 2) * width + x];
+                const dx = l_left - l_right;
+                const dy = l_down - l_up;
                 grad[idx] = Math.sqrt(dx * dx + dy * dy);
             }
         }
 
+        // 4. Run flood-fill mask simulation for each candidate threshold
         const margin = Math.floor(width * 0.05);
         const candidates = [];
         for (let t = 0.30; t <= 0.98; t += 0.02) {
@@ -642,7 +614,7 @@ export class BalloonizeEngine {
             let qHead = 0;
             let qTail = 0;
 
-            // Seed queue with outer border margin (same as simulation mask setup)
+            // Seed queue with outer border margin
             for (let y = 0; y < height; y++) {
                 for (let x = 0; x < width; x++) {
                     const idx = y * width + x;
@@ -676,7 +648,7 @@ export class BalloonizeEngine {
             ratios.push((size - qTail) / size);
         }
 
-        // 3. Find the transition point (maximum jump in mask ratio)
+        // 5. Find the transition point (maximum jump in mask ratio)
         let maxJump = 0;
         let maxJumpIdx = -1;
         for (let i = 1; i < candidates.length; i++) {
@@ -689,13 +661,10 @@ export class BalloonizeEngine {
 
         let bestThreshold = 0.75;
 
-        // If we found a significant jump (meaning a clear boundary transition)
         if (maxJump > 0.05 && maxJumpIdx !== -1) {
-            // Pick a candidate slightly above the transition jump to safely place us on the balloon plateau
             bestThreshold = Math.min(0.98, candidates[maxJumpIdx] + 0.04);
             console.log(`Auto-threshold tuned via transition jump detection: ${bestThreshold.toFixed(2)} (jump: ${maxJump.toFixed(2)} at ${candidates[maxJumpIdx].toFixed(2)})`);
         } else {
-            // Fallback: find the candidate with lowest sensitivity in the safe range
             let minSensitivity = Infinity;
             for (let i = 1; i < candidates.length - 1; i++) {
                 const ratio = ratios[i];
@@ -717,9 +686,9 @@ export class BalloonizeEngine {
         if (!this.loadedImage) return;
 
         const gl = this.gl;
-        this.isBaked = false; // Reset lock
+        this.isBaked = false;
         
-        // Detect if the uploaded image has transparent pixels
+        // Detect transparent pixels
         const tmpCanvas = document.createElement('canvas');
         tmpCanvas.width = this.simRes;
         tmpCanvas.height = this.simRes;
@@ -737,7 +706,6 @@ export class BalloonizeEngine {
         this.hasTransparency = hasTransparency;
 
         if (resetThreshold && !hasTransparency) {
-            // Auto-tune optimal threshold using the CPU plateau sensitivity analyzer
             this.maskThreshold = this.calculateOptimalThreshold(imgData);
             const slMaskThreshold = document.getElementById('slider-mask-threshold');
             if (slMaskThreshold) {

@@ -4,9 +4,7 @@ out vec2 v_uv;
 
 void main() {
     v_uv = a_position * 0.5 + 0.5;
-    // Flip Y to match typical image coordinates if needed, 
-    // but WebGL native bottom-left origin usually expects standard mapping.
-    // We'll flip the image during texture upload (UNPACK_FLIP_Y_WEBGL).
+    // Image is flipped during texture upload (UNPACK_FLIP_Y_WEBGL)
     gl_Position = vec4(a_position, 0.0, 1.0);
 }
 `;
@@ -35,9 +33,7 @@ void main() {
 
     vec4 sourceImg = texture(u_imageTexture, v_uv);
     
-    // 1. GLOBAL BACKGROUND ANCHOR
-    // Sample 4 corners slightly inset to avoid raw image borders.
-    // This gives us a highly reliable baseline for "what is background".
+    // Sample 4 corners slightly inset to estimate background color
     vec3 bg1 = texture(u_imageTexture, vec2(0.05, 0.05)).rgb;
     vec3 bg2 = texture(u_imageTexture, vec2(0.95, 0.05)).rgb;
     vec3 bg3 = texture(u_imageTexture, vec2(0.05, 0.95)).rgb;
@@ -46,9 +42,7 @@ void main() {
     
     float diffFromBg = distance(sourceImg.rgb, globalBg);
 
-    // 2. WIDE GRADIENT SENSOR
-    // By stepping 2.0 texels wide, we naturally jump over high-frequency JPEG noise,
-    // only registering true, massive structural edges.
+    // Compute luminance gradient with a 2.0 texel step to filter high-frequency noise
     vec3 lumaCoef = vec3(0.299, 0.587, 0.114);
     float l_l = dot(texture(u_imageTexture, v_uv + vec2(-u_texelSize.x * 2.0, 0.0)).rgb, lumaCoef);
     float l_r = dot(texture(u_imageTexture, v_uv + vec2( u_texelSize.x * 2.0, 0.0)).rgb, lumaCoef);
@@ -65,22 +59,18 @@ void main() {
     float edgeProximity = 4.0 - (m_l + m_r + m_u + m_d);
     
     if (edgeProximity > 0.0) {
-        // Morphological Cleanup: instantly trim isolated background noise dots
+        // Trim isolated noise dots (morphological cleanup)
         if (m_l + m_r + m_u + m_d <= 1.0) {
             fragColor = vec4(0.0, 0.0, 0.0, 0.0);
             return;
         }
 
         bool keepEating = false;
-        
         if (u_hasTransparency > 0.5) {
-            // PNG Mode: Rely strictly on Alpha channel for perfect cutout
+            // PNG mode: trim based on transparency
             keepEating = (sourceImg.a < 0.1);
         } else {
-            // JPEG Mode: THE "NATURAL GAP" LOGIC
-            // Accepts the pixel if it is part of a smooth background (grad is low)
-            // OR if it matches the background color (diff is low, eating through noise).
-            // It ONLY stops when hitting something that is BOTH sharp AND distinct in color.
+            // JPEG mode: trim smooth regions or colors close to background
             keepEating = (grad < u_gradientThreshold) || (diffFromBg < u_gradientThreshold * 1.5);
         }
         if (keepEating) {
@@ -89,7 +79,7 @@ void main() {
         }
     }
 
-    // 3. TRUE EUCLIDEAN SDF (Eikonal Solver - Keeps the balloon perfectly round)
+    // Eikonal solver for Euclidean SDF calculation
     if (m_l == 0.0 || m_r == 0.0 || m_u == 0.0 || m_d == 0.0) {
         currentSDF = 0.004; 
     } else {
@@ -134,55 +124,53 @@ void main() {
     float mask = center.b;
     float sdf = center.a; 
 
-    // 3x3 Kernel for the Hessian Matrix
+    // Sample direct neighbors
     float u_left  = texture(u_simState, v_uv + vec2(-u_texelSize.x, 0.0)).r;
     float u_right = texture(u_simState, v_uv + vec2( u_texelSize.x, 0.0)).r;
     float u_up    = texture(u_simState, v_uv + vec2(0.0,  u_texelSize.y)).r;
     float u_down  = texture(u_simState, v_uv + vec2(0.0, -u_texelSize.y)).r;
     
-    // DIFFUSION: Kill high-frequency noise (ringing) by slightly averaging with neighbors
+    // Apply spatial diffusion to suppress high-frequency noise
     float localAvg = (u_left + u_right + u_up + u_down) * 0.25;
     u_t = mix(u_t, localAvg, u_diffusion); 
     
-    // Re-sample neighbors based on diffused center for stable laplacian
     float laplacian = (u_left + u_right + u_up + u_down) - 4.0 * u_t;
  
+    // Sample diagonal neighbors for curvature computation
     float u_ul = texture(u_simState, v_uv + vec2(-u_texelSize.x,  u_texelSize.y)).r;
     float u_ur = texture(u_simState, v_uv + vec2( u_texelSize.x,  u_texelSize.y)).r;
     float u_dl = texture(u_simState, v_uv + vec2(-u_texelSize.x, -u_texelSize.y)).r;
     float u_dr = texture(u_simState, v_uv + vec2( u_texelSize.x, -u_texelSize.y)).r;
  
-    // --- GAUSSIAN CURVATURE REGULARIZER ---
+    // Gaussian curvature regularization
     float z_xx = u_right + u_left - 2.0 * u_t;
     float z_yy = u_up + u_down - 2.0 * u_t;
     float z_xy = (u_ur + u_dl - u_ul - u_dr) * 0.25;
- 
     float K = (z_xx * z_yy) - (z_xy * z_xy);
-    float developablePenalty = clamp(abs(K) * 400.0, 0.0, 0.15); // Softened penalty
+    float developablePenalty = clamp(abs(K) * 400.0, 0.0, 0.15);
     
     float tension = u_tension * mask; 
     float pressure = u_pressure * mask;      
-    
     float damping = u_damping - developablePenalty;              
     
     float acceleration = (tension * tension) * laplacian + pressure;
     float u_t_plus = 2.0 * u_t - u_t_minus + acceleration;
     
-    // Low-pass spatial filter blend executed directly inside the solver pass
-    // to instantly extinguish micro-scale numerical grid snapping noise
+    // Low-pass filter for numerical stability
     float spatialSmooth = (u_left + u_right + u_up + u_down) * 0.25;
-    u_t_plus = mix(u_t_plus, spatialSmooth, u_diffusion * 0.5); // use diffusion to control numerical solver damping as well!
-    
+    u_t_plus = mix(u_t_plus, spatialSmooth, u_diffusion * 0.5);
     u_t_plus *= damping;
 
+    // Interactive pointer deformation
     float brushRadius = 0.15;
     float distToPointer = length(v_uv - u_pointerPos);
     if (distToPointer < brushRadius && abs(u_pointerForce) > 0.0) {
         float dentShape = smoothstep(brushRadius, 0.0, distToPointer);
-        dentShape = dentShape * dentShape; // Square for a much softer, cushioned spatial profile
+        dentShape = dentShape * dentShape;
         u_t_plus -= abs(u_pointerForce) * dentShape * mask * 0.6; 
     }
 
+    // Apply plastic limit based on SDF and mask constraint
     float plastic_limit = pow(sdf, 0.35) * 6.5; 
     if (u_t_plus > plastic_limit) u_t_plus = plastic_limit; 
     if (sdf <= 0.0) u_t_plus = 0.0;
@@ -217,7 +205,7 @@ vec3 acesFilm(vec3 x) {
     return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
 }
 
-// HERMITE CUBIC SMOOTH SAMPLER
+// Bicubic texture sampler using Hermite interpolation
 vec4 sampleSmooth(sampler2D tex, vec2 uv, vec2 texSize) {
     vec2 pixel = uv / texSize - 0.5;
     vec2 f = fract(pixel);
@@ -230,7 +218,7 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv, vec2 texSize) {
     return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 }
 
-// 9-TAP GAUSSIAN KERNEL
+// 9-tap Gaussian blur filter
 vec4 sampleGaussian(vec2 uv, vec2 texSize, float radius) {
     vec2 off = texSize * radius;
     vec4 sum = vec4(0.0);
@@ -246,7 +234,7 @@ vec4 sampleGaussian(vec2 uv, vec2 texSize, float radius) {
     return sum;
 }
 
-// Crease Function
+// Compute procedural wrinkles/creases near the balloon boundaries
 float getCreases(vec2 uv, float wave, float sdf, float mask, vec2 tangent) {
     vec2 noiseOffset = vec2(sin(uv.y * 12.0 + wave), cos(uv.x * 12.0 - wave)) * 0.03;
     vec2 perturbedUV = uv + noiseOffset;
@@ -262,6 +250,7 @@ float calcTotalDepth(float wave, float sdf) {
     return (wave + pow(max(sdf, 0.0), 0.50) * baseInflation) * u_inflationDepth * u_entranceProgress;
 }
 
+// Compute depth offsets along image high-contrast seams
 float calcSeamDepth(vec2 uv, float sdf) {
     vec2 offset = u_simTexelSize * 1.5;
     vec3 c_left   = texture(u_imageTexture, uv - vec2(offset.x, 0.0)).rgb;
@@ -273,24 +262,24 @@ float calcSeamDepth(vec2 uv, float sdf) {
     return -pow(smoothstep(0.1, 0.5, length(vec2(dx, dy))), 1.5) * 0.12 * smoothstep(0.01, 0.06, sdf) * u_inflationDepth * u_entranceProgress;
 }
 
-// Detailed Procedural Studio Environment
+// Procedural environment map representing studio lighting
 vec3 getProceduralEnv(vec3 r) {
     float phi = atan(r.z, r.x);
     vec3 col = vec3(0.0);
     
-    // Left Studio Window Pane Structure
+    // Left window pane
     float winX = smoothstep(0.4, 0.42, sin(phi * 6.0));
     float winY = smoothstep(0.4, 0.42, sin(r.y * 12.0));
     float windowBounds = smoothstep(0.3, 0.8, r.x) * smoothstep(-0.5, 0.6, r.y);
     col += vec3(3.0, 3.2, 3.5) * winX * winY * windowBounds;
     
-    // Right Softbox LED Matrix
+    // Right LED softbox
     float ledX = smoothstep(0.5, 0.9, sin(phi * 30.0));
     float ledY = smoothstep(0.5, 0.9, sin(r.y * 30.0));
     float boxBounds = smoothstep(0.4, 0.8, -r.x) * smoothstep(-0.4, 0.5, r.y);
     col += vec3(2.5, 2.0, 1.6) * ledX * ledY * boxBounds;
     
-    // Horizon repeating window slots (wrapping edge)
+    // Horizon light slots
     float horizonMask = smoothstep(0.5, 0.0, abs(r.z));
     float windowSlots = smoothstep(0.3, 0.6, sin(phi * 12.0));
     col += vec3(2.0, 2.5, 3.0) * windowSlots * horizonMask;
@@ -299,24 +288,23 @@ vec3 getProceduralEnv(vec3 r) {
     float overhead = smoothstep(0.8, 0.95, r.y) * smoothstep(0.7, 0.9, sin(r.x * 20.0));
     col += vec3(1.5, 1.8, 2.2) * overhead;
     
-    // Ambient room fill
+    // Ambient room lighting
     col += mix(vec3(0.02, 0.02, 0.04), vec3(0.1, 0.12, 0.15), smoothstep(-1.0, 1.0, r.y));
     return col;
 }
 
 void main() {
-    // 1. GAUSSIAN BASE PASS
+    // 1. Gaussian-filtered base simulation properties
     float blurRadius = 1.0 + u_diffusion * 6.0; 
     vec4 g_state = sampleGaussian(v_uv, u_simTexelSize, blurRadius);
     
-    // Keep raw mask and SDF sharp for perfect boundary silhouettes
     vec4 rawState = texture(u_simState, v_uv);
     float mask = rawState.b; 
     float sharpSDF = rawState.a;
     float sdf = g_state.a;
     float wave = g_state.r;
     
-    // 2. GEOMETRIC DERIVATIVE PASS
+    // 2. Compute derivatives for shading normals
     float offsetMult = 2.0 + u_diffusion * 8.0;
     vec2 offset = u_simTexelSize * offsetMult;
     
@@ -330,7 +318,7 @@ void main() {
     vec2 bleedOffset = slope_normal * clamp(wave * 2.0, -1.0, 1.0) * u_simTexelSize;
     vec2 warpedUV = v_uv - bleedOffset;
 
-    // Macro-depth (smooth balloon dome geometry)
+    // Macro-depth derivatives
     float h_left  = calcTotalDepth(g_left.r,  g_left.a);
     float h_right = calcTotalDepth(g_right.r, g_right.a);
     float h_up    = calcTotalDepth(g_up.r,    g_up.a);
@@ -339,7 +327,7 @@ void main() {
     float dZdx_macro = (h_right - h_left) * 0.5 / offset.x; 
     float dZdy_macro = (h_up - h_down) * 0.5 / offset.y;
 
-    // Decoupled tight-scale derivatives (keeps seams and creases sharp)
+    // Seam-depth derivatives
     float s_left  = calcSeamDepth(warpedUV - vec2(u_simTexelSize.x, 0.0), sharpSDF);
     float s_right = calcSeamDepth(warpedUV + vec2(u_simTexelSize.x, 0.0), sharpSDF);
     float s_up    = calcSeamDepth(warpedUV + vec2(0.0, u_simTexelSize.y), sharpSDF);
@@ -348,6 +336,7 @@ void main() {
     float dZdx_seam = (s_right - s_left) * 0.5 / u_simTexelSize.x;
     float dZdy_seam = (s_up - s_down) * 0.5 / u_simTexelSize.y;
     
+    // Crease derivatives
     float creases = getCreases(v_uv, wave, sdf, mask, tangent);
     float c_l = getCreases(v_uv - vec2(u_simTexelSize.x, 0.0), wave, sdf, mask, tangent);
     float c_r = getCreases(v_uv + vec2(u_simTexelSize.x, 0.0), wave, sdf, mask, tangent);
@@ -359,66 +348,55 @@ void main() {
     
     vec3 normal = normalize(vec3(-dZdx, -dZdy, 28.0));
     
-    // 3. LIGHTING AND SHADING
+    // 3. Shading and specular highlights
     vec3 viewDir = vec3(0.0, 0.0, 1.0);
     vec3 refVec = reflect(-viewDir, normal);
     
     vec4 texColorRaw = texture(u_imageTexture, warpedUV);
     vec3 albedo = srgbToLinear(texColorRaw.rgb);
-    
-    // Detailed room environment reflections
     vec3 studioEnv = getProceduralEnv(refVec) * u_envIntensity;
     
-    // Specular Highlight
     vec3 pointLightDir = normalize(u_lightDir);
     float h_dot_l = max(dot(refVec, pointLightDir), 0.0);
     float specPointCore = pow(h_dot_l, 128.0) * u_specCore;   
     float specPointGlow = pow(h_dot_l, 24.0) * u_specGlow;    
     studioEnv += vec3(1.0, 0.96, 0.92) * (specPointCore + specPointGlow);
     
-    // Backlit Rim Glow (Removed from studioEnv to prevent Fresnel squashing)
+    // Rim lighting
     float NdotV = max(dot(normal, viewDir), 0.0);
-    float rimGlow = pow(1.0 - NdotV, 1.2) * 1.2; // Softened exponent (1.2 instead of 4.0) to cover more inwards
+    float rimGlow = pow(1.0 - NdotV, 1.2) * 1.2;
     vec3 rimColor = vec3(0.9, 0.95, 1.0) * rimGlow * u_rim * mask;
 
-    // Diffuse Ambient component
+    // Ambient and diffuse shading
     float ndl = max(dot(normal, pointLightDir), 0.0);
     vec3 ambientComponent = albedo * (ndl * 0.55 + 0.12); 
 
-    // Enhanced Plastic/Mylar Fresnel (0.15 base reflectivity for glossy finish)
+    // Mylar fresnel model
     float fresnel = 0.15 + 0.85 * pow(1.0 - NdotV, 5.0);
     vec3 color = mix(ambientComponent, studioEnv, fresnel);
     color += vec3(3.5) * specPointCore * albedo; 
-    color += rimColor; // Added outside Fresnel mix so it can wrap inward freely
+    color += rimColor;
 
     color = linearToSrgb(acesFilm(color));
 
-    // Mix flat unshaded original texture with shaded 3D color
-    // This allows it to quickly breathe into 3D on entrance (u_entranceProgress: 0 -> 1)
-    // while still respecting the manual slider (u_inflationDepth)
     float currentInflation = u_inflationDepth * u_entranceProgress;
     color = mix(texColorRaw.rgb, color, currentInflation);
 
-    float smoothedSDF = smoothstep(0.0, 0.06, sharpSDF); // Keep edge sharp
+    float smoothedSDF = smoothstep(0.0, 0.06, sharpSDF);
     
-    // Blend transparent background pixels with the HTML page background color (#0d0d11)
-    vec3 pageBg = vec3(0.051, 0.051, 0.067); // Match body bg #0d0d11
+    // Background composition
+    vec3 pageBg = vec3(0.051, 0.051, 0.067);
     vec4 origTex = texture(u_imageTexture, v_uv);
     vec3 bgColor = mix(pageBg, origTex.rgb, origTex.a); 
     
-    // AI gradient circle wave out (one-time expanding wave ring inside the balloon region)
+    // Scanner ring entrance animation
     vec2 centerUV = vec2(0.5, 0.5);
     float dist = length(v_uv - centerUV);
-    
-    // Ring expands from center (radius 0.0 to 1.1)
     float ringRadius = u_entranceProgress * 1.1;
-    float ringWidth = 0.18; // Balanced soft volumetric glow band
+    float ringWidth = 0.18;
     float ring = smoothstep(ringWidth, 0.0, abs(dist - ringRadius));
-    
-    // Soft radial fade near center and far borders
     ring *= smoothstep(1.1, 0.2, dist);
     
-    // Wave colors
     vec3 waveColor1 = vec3(1.0, 0.478, 0.349);   // Peach/Orange #ff7a59
     vec3 waveColor2 = vec3(1.0, 0.32, 0.48);     // Pink/Coral #ff527b
     vec3 waveColor3 = vec3(0.043, 0.576, 0.901); // Neon Blue #0b93e6
@@ -426,44 +404,30 @@ void main() {
     vec3 waveCol = mix(waveColor1, waveColor2, sin(dist * 6.0 - u_entranceProgress * 5.0) * 0.5 + 0.5);
     waveCol = mix(waveCol, waveColor3, cos(dist * 4.0 + u_entranceProgress * 3.0) * 0.5 + 0.5);
     
-    // Fade the wave intensity out to 0.0 as u_entranceProgress reaches 1.0
-    // S-curve smoothstep fade for soft trailing decay
     float waveFade = 1.0 - smoothstep(0.0, 1.0, u_entranceProgress);
     float waveIntensity = 0.9 * waveFade * u_inflationDepth; 
     
-    // Add the bright glowing scanner ring directly onto the balloon color
-    color += waveCol * ring * waveIntensity * smoothedSDF;
-    
-    // Apply soft drop shadow to the background (diminishes as balloon flattens)
+    // Apply drop shadow
     float shadowIntensity = smoothstep(0.0, 0.12, length(bleedOffset)) * mask * currentInflation;
     bgColor = mix(bgColor, vec3(0.0), shadowIntensity * 0.45);
     
-    // True selection contour (while dragging mask threshold slider)
+    // Mask boundary visualization (during threshold adjustment)
     if (u_showBoundary > 0.5) {
         float m_center = rawState.b;
-        
-        // 1. Force the balloon to remain flat (original texture)
         color = texColorRaw.rgb;
-        
-        // 2. Dim the outside of the mask (where m_center is 0.0) by 55%
         float outsideMask = 1.0 - m_center;
         bgColor = mix(bgColor, bgColor * 0.45, outsideMask);
         
-        // 3. Draw a single, clean, sharp theme-colored contour line (1.2 texels)
         float m_left   = texture(u_simState, v_uv + vec2(-u_simTexelSize.x * 1.2, 0.0)).b;
         float m_right  = texture(u_simState, v_uv + vec2( u_simTexelSize.x * 1.2, 0.0)).b;
         float m_up     = texture(u_simState, v_uv + vec2(0.0,  u_simTexelSize.y * 1.2)).b;
         float m_down   = texture(u_simState, v_uv + vec2(0.0, -u_simTexelSize.y * 1.2)).b;
         float edge = max(max(abs(m_center - m_left), abs(m_center - m_right)), max(abs(m_center - m_up), abs(m_center - m_down)));
         
-        // Theme pink/coral color matching the app UI accent (#ff5e7b)
         vec3 themeColor = vec3(1.0, 0.368, 0.482);
-        
-        // Overlay the contour cleanly on top
         color = mix(color, themeColor, edge);
         bgColor = mix(bgColor, themeColor, edge);
     } else {
-        // Add the bright glowing scanner ring directly onto the balloon color (only when NOT dragging)
         color += waveCol * ring * waveIntensity * smoothedSDF;
     }
     
