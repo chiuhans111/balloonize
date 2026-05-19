@@ -83,7 +83,7 @@ void main() {
     float u_t = center.r;
     float u_t_minus = center.g;
     float mask = center.b;
-    float sdf = center.a; // True distance to the edge
+    float sdf = center.a; 
 
     float u_left  = texture(u_simState, v_uv + vec2(-u_texelSize.x, 0.0)).r;
     float u_right = texture(u_simState, v_uv + vec2( u_texelSize.x, 0.0)).r;
@@ -92,38 +92,33 @@ void main() {
     
     float laplacian = (u_left + u_right + u_up + u_down) - 4.0 * u_t;
 
-    // INELASTIC PLASTIC PHYSICS
-    float tension = 0.5 * mask;        // Rapid wave transmission
-    float pressure = 0.005 * mask;     // Constant air injection pushing the shape UP
-    float damping = 0.94;              // Quick energy loss (plastic doesn't bounce endlessly)
+    // FAT BALLOON PHYSICS
+    float tension = 0.4 * mask;        
+    float pressure = 0.05 * mask;      // 10x higher pressure: keeps the balloon tightly inflated
+    float damping = 0.85;              // High damping instantly kills watery ripples
     
-    // Notice: NO spring restoring force. Plastic only holds shape due to pressure.
     float acceleration = (tension * tension) * laplacian + pressure;
 
-    // Verlet integration
     float u_t_plus = 2.0 * u_t - u_t_minus + acceleration;
     u_t_plus *= damping;
 
-    // POINTER INTERACTION (Squishing the inflated bag)
-    float brushRadius = 0.10;
+    // THICK POINTER SQUISH
+    float brushRadius = 0.15;
     float distToPointer = length(v_uv - u_pointerPos);
     
     if (distToPointer < brushRadius && abs(u_pointerForce) > 0.0) {
         float dentShape = pow(1.0 - (distToPointer / brushRadius), 2.0);
-        // Pushing INWARD against the air pressure
-        u_t_plus -= abs(u_pointerForce) * dentShape * mask; 
+        u_t_plus -= abs(u_pointerForce) * dentShape * mask * 2.0; 
     }
 
-    // HARD STRUCTURAL CLOTH CONSTRAINT (Inextensibility Limit)
-    // The maximum height of the plastic is strictly bound by a dome profile of the SDF.
-    // If it inflates past this, it hits the physical limit of the material and stops.
-    float plastic_limit = pow(sdf, 0.65) * 2.5; 
+    // PERFECT DOME CONSTRAINT
+    // Using a square root of the distance field creates a mathematically perfect, fat round dome
+    float plastic_limit = pow(sdf, 0.5) * 5.0; 
     
     if (u_t_plus > plastic_limit) {
-        u_t_plus = plastic_limit; // Clamp to the physical stretch limit
+        u_t_plus = plastic_limit; 
     }
 
-    // PERFECT EDGE LOCK
     if (sdf <= 0.0) {
         u_t_plus = 0.0;
     }
@@ -147,7 +142,6 @@ void main() {
     float wave = state.r;
     float mask = state.b;
     
-    // Calculate precise geometric normal of the boundary edge
     float m_left  = texture(u_simState, v_uv + vec2(-u_simTexelSize.x, 0.0)).b;
     float m_right = texture(u_simState, v_uv + vec2( u_simTexelSize.x, 0.0)).b;
     float m_up    = texture(u_simState, v_uv + vec2(0.0,  u_simTexelSize.y)).b;
@@ -155,51 +149,51 @@ void main() {
     
     vec2 edge_normal = normalize(vec2(m_left - m_right, m_down - m_up) + 0.0001);
 
-    // 1. Boundary Bleed Shift
     vec2 bleedOffset = edge_normal * clamp(wave * 2.0, -1.0, 1.0) * u_simTexelSize;
     vec2 warpedUV = v_uv - bleedOffset;
 
-    // 2. Analytical Perpendicular Crimp Wrinkles
     vec2 tangent = vec2(-edge_normal.y, edge_normal.x);
     float crimpPhase = dot(v_uv * 180.0, tangent);
     float borderZone = smoothstep(1.0, 0.5, mask) * smoothstep(0.0, 0.3, mask);
     float creases = sin(crimpPhase + wave * 8.0) * borderZone * 0.04;
 
-    // 3. Central Difference Shading (Replaces broken dFdx)
-    // We sample the wave+crease height of neighboring pixels directly
-    float h_center = wave + creases;
-    
     float w_left = texture(u_simState, v_uv + vec2(-u_simTexelSize.x, 0.0)).r;
     float w_right = texture(u_simState, v_uv + vec2(u_simTexelSize.x, 0.0)).r;
     float w_up = texture(u_simState, v_uv + vec2(0.0, u_simTexelSize.y)).r;
     float w_down = texture(u_simState, v_uv + vec2(0.0, -u_simTexelSize.y)).r;
     
-    // Add crease approximation to neighbors for sharp lighting
     float dZdx = ((w_right - w_left) * 0.5) + dFdx(creases); 
     float dZdy = ((w_up - w_down) * 0.5) + dFdy(creases);
     
-    // The Z-weight determines the "thickness" of the fluid. Lower = thicker/glassier.
-    // Increased Z-weight (0.04) makes the material look thicker and slightly less sharp-glassy
-    vec3 normal = normalize(vec3(-dZdx, -dZdy, 0.04));
+    // CRITICAL VISUAL FIX: Z-weight increased to 0.25 makes the surface look fat and smoothly rounded
+    vec3 normal = normalize(vec3(-dZdx, -dZdy, 0.25));
     
-    // 4. Lighting & Specular Calculation
-    vec3 lightDir = normalize(vec3(0.3, 0.7, 0.8));
+    // DUAL STUDIO LIGHTING (Mylar balloon look)
+    vec3 mainLightDir = normalize(vec3(0.4, 0.8, 1.0));
+    vec3 fillLightDir = normalize(vec3(-0.6, -0.4, 0.5));
     vec3 viewDir = vec3(0.0, 0.0, 1.0);
-    vec3 halfVector = normalize(lightDir + viewDir);
     
-    float diffuse = max(dot(normal, lightDir), 0.0);
-    float specular = pow(max(dot(normal, halfVector), 0.0), 120.0);
+    vec3 halfMain = normalize(mainLightDir + viewDir);
+    vec3 halfFill = normalize(fillLightDir + viewDir);
+    
+    float diffuse = max(dot(normal, mainLightDir), 0.0);
+    float bounce = max(dot(normal, fillLightDir), 0.0) * 0.3; // Soft ambient fill
+    
+    float specMain = pow(max(dot(normal, halfMain), 0.0), 150.0) * 1.5; // Sharp key highlight
+    float specFill = pow(max(dot(normal, halfFill), 0.0), 50.0) * 0.5;  // Broad fill highlight
+    
+    // EDGE FRESNEL (Plastic Sheen)
+    float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
 
-    // Fetch original image pixel using the warped/refracted UV
     vec4 texColor = texture(u_imageTexture, warpedUV);
     
-    // High-contrast rim/ambient mixing
-    vec3 finalColor = texColor.rgb * (diffuse * 0.5 + 0.6) + vec3(specular * 1.5);
+    // Composite: Color + Lighting + Highlights + Sheen
+    vec3 finalColor = texColor.rgb * (diffuse * 0.6 + bounce + 0.5);
+    finalColor += vec3(specMain + specFill);
+    finalColor += (texColor.rgb + 0.5) * fresnel * 0.6; 
 
-    // 5. Exterior Drop Shadow handling
     float softMask = texture(u_simState, warpedUV).b;
     if (softMask < 0.99) {
-        // Create a fake ambient occlusion shadow just outside the mask
         float shadowIntensity = smoothstep(0.0, 0.1, length(bleedOffset)) * mask;
         finalColor = mix(vec3(0.1), finalColor, 1.0 - shadowIntensity);
     }
