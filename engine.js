@@ -6,7 +6,7 @@ import {
 } from './shaders.js';
 
 export class BalloonizeEngine {
-    constructor(canvas, imageSource) {
+    constructor(canvas, imageSource, options = {}) {
         this.canvas = canvas;
         // Need webgl2 for float textures and texture() in glsl
         this.gl = canvas.getContext('webgl2');
@@ -24,6 +24,22 @@ export class BalloonizeEngine {
         this.simRes = 256;
         this.rafId = null;
         this.consecutiveIdleFrames = 0;
+
+        // Generalize editable parameters
+        this.physicsParams = Object.assign({
+            tension: 0.7,
+            damping: 0.67,
+            diffusion: 0.15
+        }, options.physicsParams || {});
+
+        this.lightingParams = Object.assign({
+            env: 1.4,
+            az: -45,
+            el: 56,
+            specCore: 6.7,
+            specGlow: 1.0,
+            rim: 0.5
+        }, options.lightingParams || {});
         
         this.initGL();
         this.initTextures();
@@ -179,9 +195,6 @@ export class BalloonizeEngine {
     }
 
     initEvents() {
-        this.physicsParams = { tension: 0.7, damping: 0.67, diffusion: 0.15 };
-        this.lightingParams = { env: 1.4, az: -45, el: 56, specCore: 6.7, specGlow: 1.0, rim: 0.5 };
-        
         const slTension = document.getElementById('slider-tension');
         const slDamping = document.getElementById('slider-damping');
         const slDiffusion = document.getElementById('slider-diffusion');
@@ -194,6 +207,18 @@ export class BalloonizeEngine {
         const slRim = document.getElementById('slider-rim');
         
         if (slTension) {
+            // Initialize slider values to match the current parameter values (from constructor options)
+            slTension.value = this.physicsParams.tension;
+            slDamping.value = this.physicsParams.damping;
+            slDiffusion.value = this.physicsParams.diffusion;
+            
+            slEnv.value = this.lightingParams.env;
+            slAz.value = this.lightingParams.az;
+            slEl.value = this.lightingParams.el;
+            slSpecCore.value = this.lightingParams.specCore;
+            slSpecGlow.value = this.lightingParams.specGlow;
+            slRim.value = this.lightingParams.rim;
+
             const updateParams = () => {
                 this.physicsParams.tension = parseFloat(slTension.value);
                 this.physicsParams.damping = parseFloat(slDamping.value);
@@ -206,16 +231,26 @@ export class BalloonizeEngine {
                 this.lightingParams.specGlow = parseFloat(slSpecGlow.value);
                 this.lightingParams.rim = parseFloat(slRim.value);
 
-                document.getElementById('val-tension').innerText = this.physicsParams.tension.toFixed(2);
-                document.getElementById('val-damping').innerText = this.physicsParams.damping.toFixed(2);
-                document.getElementById('val-diffusion').innerText = this.physicsParams.diffusion.toFixed(2);
+                const elT = document.getElementById('val-tension');
+                const elD = document.getElementById('val-damping');
+                const elDi = document.getElementById('val-diffusion');
+                const elE = document.getElementById('val-env');
+                const elAz = document.getElementById('val-azimuth');
+                const elEl = document.getElementById('val-elevation');
+                const elSC = document.getElementById('val-spec-core');
+                const elSG = document.getElementById('val-spec-glow');
+                const elR = document.getElementById('val-rim');
+
+                if (elT) elT.innerText = this.physicsParams.tension.toFixed(2);
+                if (elD) elD.innerText = this.physicsParams.damping.toFixed(2);
+                if (elDi) elDi.innerText = this.physicsParams.diffusion.toFixed(2);
                 
-                document.getElementById('val-env').innerText = this.lightingParams.env.toFixed(1);
-                document.getElementById('val-azimuth').innerText = this.lightingParams.az.toFixed(0);
-                document.getElementById('val-elevation').innerText = this.lightingParams.el.toFixed(0);
-                document.getElementById('val-spec-core').innerText = this.lightingParams.specCore.toFixed(1);
-                document.getElementById('val-spec-glow').innerText = this.lightingParams.specGlow.toFixed(1);
-                document.getElementById('val-rim').innerText = this.lightingParams.rim.toFixed(1);
+                if (elE) elE.innerText = this.lightingParams.env.toFixed(1);
+                if (elAz) elAz.innerText = this.lightingParams.az.toFixed(0);
+                if (elEl) elEl.innerText = this.lightingParams.el.toFixed(0);
+                if (elSC) elSC.innerText = this.lightingParams.specCore.toFixed(1);
+                if (elSG) elSG.innerText = this.lightingParams.specGlow.toFixed(1);
+                if (elR) elR.innerText = this.lightingParams.rim.toFixed(1);
 
                 this.wake();
             };
@@ -232,6 +267,7 @@ export class BalloonizeEngine {
             
             // Call once immediately to sync JS state with DOM (fixes browser form caching)
             updateParams();
+            this.boundUpdateParams = updateParams;
         }
 
         const updatePointer = (e) => {
@@ -241,15 +277,15 @@ export class BalloonizeEngine {
             this.pointerPos = [x, y];
         };
 
-        this.canvas.addEventListener('pointerdown', (e) => {
+        this.boundPointerDown = (e) => {
             this.canvas.setPointerCapture(e.pointerId);
             updatePointer(e);
             this.pointerForce = 1.0; // Stronger click (force x2)
             this.isInteracting = true;
             this.wake();
-        });
+        };
 
-        this.canvas.addEventListener('pointermove', (e) => {
+        this.boundPointerMove = (e) => {
             updatePointer(e);
             if (this.isInteracting) {
                 this.pointerForce = 1.0; // Dragging state (deep)
@@ -257,21 +293,82 @@ export class BalloonizeEngine {
                 this.pointerForce = 0.5; // Hover state (used to be click state)
             }
             this.wake();
-        });
+        };
 
-        this.canvas.addEventListener('pointerup', (e) => {
+        this.boundPointerUp = (e) => {
             this.canvas.releasePointerCapture(e.pointerId);
             this.isInteracting = false;
             this.pointerForce = 0.5; // Revert to hover state
             this.wake();
-        });
+        };
 
-        this.canvas.addEventListener('pointerleave', (e) => {
+        this.boundPointerLeave = (e) => {
             if (!this.isInteracting) {
                 this.pointerForce = 0.0;
                 this.wake();
             }
-        });
+        };
+
+        this.canvas.addEventListener('pointerdown', this.boundPointerDown);
+        this.canvas.addEventListener('pointermove', this.boundPointerMove);
+        this.canvas.addEventListener('pointerup', this.boundPointerUp);
+        this.canvas.addEventListener('pointerleave', this.boundPointerLeave);
+    }
+
+    destroy() {
+        // Cancel animation loop
+        if (this.rafId) {
+            cancelAnimationFrame(this.rafId);
+            this.rafId = null;
+        }
+
+        // Remove event listeners
+        if (this.boundUpdateParams) {
+            const slTension = document.getElementById('slider-tension');
+            const slDamping = document.getElementById('slider-damping');
+            const slDiffusion = document.getElementById('slider-diffusion');
+            const slEnv = document.getElementById('slider-env');
+            const slAz = document.getElementById('slider-azimuth');
+            const slEl = document.getElementById('slider-elevation');
+            const slSpecCore = document.getElementById('slider-spec-core');
+            const slSpecGlow = document.getElementById('slider-spec-glow');
+            const slRim = document.getElementById('slider-rim');
+            
+            if (slTension) {
+                slTension.removeEventListener('input', this.boundUpdateParams);
+                slDamping.removeEventListener('input', this.boundUpdateParams);
+                slDiffusion.removeEventListener('input', this.boundUpdateParams);
+                slEnv.removeEventListener('input', this.boundUpdateParams);
+                slAz.removeEventListener('input', this.boundUpdateParams);
+                slEl.removeEventListener('input', this.boundUpdateParams);
+                slSpecCore.removeEventListener('input', this.boundUpdateParams);
+                slSpecGlow.removeEventListener('input', this.boundUpdateParams);
+                slRim.removeEventListener('input', this.boundUpdateParams);
+            }
+        }
+
+        if (this.boundPointerDown) this.canvas.removeEventListener('pointerdown', this.boundPointerDown);
+        if (this.boundPointerMove) this.canvas.removeEventListener('pointermove', this.boundPointerMove);
+        if (this.boundPointerUp) this.canvas.removeEventListener('pointerup', this.boundPointerUp);
+        if (this.boundPointerLeave) this.canvas.removeEventListener('pointerleave', this.boundPointerLeave);
+
+        // Delete WebGL objects to prevent GPU memory leaks
+        const gl = this.gl;
+        if (gl) {
+            gl.deleteProgram(this.trimProgram);
+            gl.deleteProgram(this.waveProgram);
+            gl.deleteProgram(this.compositeProgram);
+            
+            gl.deleteBuffer(this.quadVBO);
+            gl.deleteVertexArray(this.quadVAO);
+            
+            gl.deleteTexture(this.simA);
+            gl.deleteTexture(this.simB);
+            gl.deleteTexture(this.imageTex);
+            
+            gl.deleteFramebuffer(this.fboA);
+            gl.deleteFramebuffer(this.fboB);
+        }
     }
 
     swapPingPong() {

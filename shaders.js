@@ -88,6 +88,7 @@ uniform float u_pointerForce;
 uniform float u_tension;
 uniform float u_damping;
 uniform float u_diffusion;
+uniform float u_pressure;
 
 in vec2 v_uv;
 out vec4 fragColor;
@@ -111,22 +112,22 @@ void main() {
     
     // Re-sample neighbors based on diffused center for stable laplacian
     float laplacian = (u_left + u_right + u_up + u_down) - 4.0 * u_t;
-
+ 
     float u_ul = texture(u_simState, v_uv + vec2(-u_texelSize.x,  u_texelSize.y)).r;
     float u_ur = texture(u_simState, v_uv + vec2( u_texelSize.x,  u_texelSize.y)).r;
     float u_dl = texture(u_simState, v_uv + vec2(-u_texelSize.x, -u_texelSize.y)).r;
     float u_dr = texture(u_simState, v_uv + vec2( u_texelSize.x, -u_texelSize.y)).r;
-
+ 
     // --- GAUSSIAN CURVATURE REGULARIZER ---
     float z_xx = u_right + u_left - 2.0 * u_t;
     float z_yy = u_up + u_down - 2.0 * u_t;
     float z_xy = (u_ur + u_dl - u_ul - u_dr) * 0.25;
-
+ 
     float K = (z_xx * z_yy) - (z_xy * z_xy);
     float developablePenalty = clamp(abs(K) * 400.0, 0.0, 0.15); // Softened penalty
     
     float tension = u_tension * mask; 
-    float pressure = 0.05 * mask;      
+    float pressure = u_pressure * mask;      
     
     float damping = u_damping - developablePenalty;              
     
