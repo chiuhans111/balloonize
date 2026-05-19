@@ -55,6 +55,7 @@
             min-height: 100vh;
             overflow-x: hidden;
             -webkit-font-smoothing: antialiased;
+            -webkit-tap-highlight-color: transparent;
         }
 
         .main-container {
@@ -145,6 +146,10 @@
             touch-action: none;
             cursor: pointer;
             transition: transform 0.2s ease;
+            -webkit-tap-highlight-color: transparent;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
         }
 
         canvas:hover {
