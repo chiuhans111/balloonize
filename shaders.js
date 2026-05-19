@@ -135,12 +135,10 @@ void main() {
     float K = (z_xx * z_yy) - (z_xy * z_xy);
     float developablePenalty = clamp(abs(K) * 400.0, 0.0, 0.15); // Softened penalty
     
-    float tension = u_tension * mask * 0.65; // CFL safety margin to stop numerical overshoot
+    float tension = u_tension * mask; 
     float pressure = u_pressure * mask;      
     
-    // Dynamic viscous damping to capture energy spikes and stop minor bubbling
-    float energy = length(vec2(u_t - u_left, u_t - u_up)); 
-    float safeDamping = (u_damping - developablePenalty) - clamp(energy * 2.0, 0.0, 0.1);              
+    float damping = u_damping - developablePenalty;              
     
     float acceleration = (tension * tension) * laplacian + pressure;
     float u_t_plus = 2.0 * u_t - u_t_minus + acceleration;
@@ -150,10 +148,7 @@ void main() {
     float spatialSmooth = (u_left + u_right + u_up + u_down) * 0.25;
     u_t_plus = mix(u_t_plus, spatialSmooth, u_diffusion * 0.5); // use diffusion to control numerical solver damping as well!
     
-    u_t_plus *= safeDamping;
-    
-    // HARD ENERGY CAP: Prevents extreme snapping/bubbling feedback loops
-    u_t_plus = clamp(u_t_plus, -2.0, 2.0);
+    u_t_plus *= damping;
 
     float brushRadius = 0.15;
     float distToPointer = length(v_uv - u_pointerPos);
@@ -163,7 +158,7 @@ void main() {
         u_t_plus -= abs(u_pointerForce) * dentShape * mask * 0.8; 
     }
 
-    float plastic_limit = pow(max(sdf, 0.00001), 0.35) * 6.5; 
+    float plastic_limit = pow(sdf, 0.35) * 6.5; 
     if (u_t_plus > plastic_limit) u_t_plus = plastic_limit; 
     if (sdf <= 0.0) u_t_plus = 0.0;
 
