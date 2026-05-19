@@ -214,7 +214,7 @@ void main() {
     }
 
     // Apply plastic limit based on SDF and mask constraint
-    float plastic_limit = pow(sdf, 0.35) * 6.5; 
+    float plastic_limit = pow(max(sdf, 1e-5), 0.35) * 6.5; 
     if (u_t_plus > plastic_limit) u_t_plus = plastic_limit; 
     if (sdf <= 0.0) u_t_plus = 0.0;
 
@@ -289,10 +289,8 @@ float getCreases(vec2 uv, float wave, float sdf, float mask, vec2 tangent) {
 }
 
 float calcTotalDepth(float wave, float sdf) {
-    float x = clamp(sdf * 3.5, 0.0, 1.0);
-    float dome = sqrt(x * (2.0 - x));
-    float baseInflation = 1.35; 
-    return (wave + dome * baseInflation) * u_inflationDepth * u_entranceProgress;
+    float baseInflation = 2.2; 
+    return (wave + pow(max(sdf, 0.0), 0.65) * baseInflation) * u_inflationDepth * u_entranceProgress;
 }
 
 // Compute depth offsets along image high-contrast seams
