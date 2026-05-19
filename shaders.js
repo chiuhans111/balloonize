@@ -33,57 +33,75 @@ void main() {
         return;
     }
 
-    // Fetch the actual source image pixel
     vec4 sourceImg = texture(u_imageTexture, v_uv);
-
-    // 1. Shrink-Wrap Erosion Logic (sampled at simulation texel scale with 2x step for noise suppression)
-    float l_left  = dot(texture(u_imageTexture, v_uv + vec2(-u_texelSize.x * 2.0, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
-    float l_right = dot(texture(u_imageTexture, v_uv + vec2( u_texelSize.x * 2.0, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
-    float l_up    = dot(texture(u_imageTexture, v_uv + vec2(0.0,  u_texelSize.y * 2.0)).rgb, vec3(0.299, 0.587, 0.114));
-    float l_down  = dot(texture(u_imageTexture, v_uv + vec2(0.0, -u_texelSize.y * 2.0)).rgb, vec3(0.299, 0.587, 0.114));
     
-    float grad = length(vec2(l_left - l_right, l_down - l_up));
+    // 1. GLOBAL BACKGROUND ANCHOR
+    // Sample 4 corners slightly inset to avoid raw image borders.
+    // This gives us a highly reliable baseline for "what is background".
+    vec3 bg1 = texture(u_imageTexture, vec2(0.05, 0.05)).rgb;
+    vec3 bg2 = texture(u_imageTexture, vec2(0.95, 0.05)).rgb;
+    vec3 bg3 = texture(u_imageTexture, vec2(0.05, 0.95)).rgb;
+    vec3 bg4 = texture(u_imageTexture, vec2(0.95, 0.95)).rgb;
+    vec3 globalBg = (bg1 + bg2 + bg3 + bg4) * 0.25;
+    
+    float diffFromBg = distance(sourceImg.rgb, globalBg);
 
-    float m_left  = texture(u_simState, v_uv + vec2(-u_texelSize.x, 0.0)).b;
-    float m_right = texture(u_simState, v_uv + vec2( u_texelSize.x, 0.0)).b;
-    float m_up    = texture(u_simState, v_uv + vec2(0.0,  u_texelSize.y)).b;
-    float m_down  = texture(u_simState, v_uv + vec2(0.0, -u_texelSize.y)).b;
+    // 2. WIDE GRADIENT SENSOR
+    // By stepping 2.0 texels wide, we naturally jump over high-frequency JPEG noise,
+    // only registering true, massive structural edges.
+    vec3 lumaCoef = vec3(0.299, 0.587, 0.114);
+    float l_l = dot(texture(u_imageTexture, v_uv + vec2(-u_texelSize.x * 2.0, 0.0)).rgb, lumaCoef);
+    float l_r = dot(texture(u_imageTexture, v_uv + vec2( u_texelSize.x * 2.0, 0.0)).rgb, lumaCoef);
+    float l_u = dot(texture(u_imageTexture, v_uv + vec2(0.0,  u_texelSize.y * 2.0)).rgb, lumaCoef);
+    float l_d = dot(texture(u_imageTexture, v_uv + vec2(0.0, -u_texelSize.y * 2.0)).rgb, lumaCoef);
+    
+    float grad = length(vec2(l_l - l_r, l_d - l_u));
 
-    // Check if we are currently on the outer edge of the mask
-    float edgeProximity = 4.0 - (m_left + m_right + m_up + m_down);
+    float m_l = texture(u_simState, v_uv + vec2(-u_texelSize.x, 0.0)).b;
+    float m_r = texture(u_simState, v_uv + vec2( u_texelSize.x, 0.0)).b;
+    float m_u = texture(u_simState, v_uv + vec2(0.0,  u_texelSize.y)).b;
+    float m_d = texture(u_simState, v_uv + vec2(0.0, -u_texelSize.y)).b;
+
+    float edgeProximity = 4.0 - (m_l + m_r + m_u + m_d);
     
     if (edgeProximity > 0.0) {
         // Morphological Cleanup: instantly trim isolated background noise dots
-        if (m_left + m_right + m_up + m_down <= 1.0) {
+        if (m_l + m_r + m_u + m_d <= 1.0) {
             fragColor = vec4(0.0, 0.0, 0.0, 0.0);
             return;
         }
 
-        // HYBRID STOPPING CONDITION:
-        // Keep eating the mask ONLY if we haven't hit the shape boundary.
-        // For transparent images (PNGs), stop instantly when hitting opaque pixels (alpha >= 0.1).
-        // For flattened images (JPEGs), fallback to the luminance gradient threshold.
-        bool keepEating = (u_hasTransparency > 0.5) ? (sourceImg.a < 0.1) : (grad < u_gradientThreshold);
+        bool keepEating = false;
+        
+        if (u_hasTransparency > 0.5) {
+            // PNG Mode: Rely strictly on Alpha channel for perfect cutout
+            keepEating = (sourceImg.a < 0.1);
+        } else {
+            // JPEG Mode: THE "NATURAL GAP" LOGIC
+            // Accepts the pixel if it is part of a smooth background (grad is low)
+            // OR if it matches the background color (diff is low, eating through noise).
+            // It ONLY stops when hitting something that is BOTH sharp AND distinct in color.
+            keepEating = (grad < u_gradientThreshold) || (diffFromBg < u_gradientThreshold * 1.5);
+        }
         if (keepEating) {
-            fragColor = vec4(0.0, 0.0, 0.0, 0.0); // Trim this pixel out
+            fragColor = vec4(0.0, 0.0, 0.0, 0.0); 
             return;
         }
     }
 
-    // 2. TRUE EUCLIDEAN SDF (Eikonal Equation Solver)
-    if (m_left == 0.0 || m_right == 0.0 || m_up == 0.0 || m_down == 0.0) {
-        currentSDF = 0.004; // Edge boundary
+    // 3. TRUE EUCLIDEAN SDF (Eikonal Solver - Keeps the balloon perfectly round)
+    if (m_l == 0.0 || m_r == 0.0 || m_u == 0.0 || m_d == 0.0) {
+        currentSDF = 0.004; 
     } else {
-        float s_left  = texture(u_simState, v_uv + vec2(-u_texelSize.x, 0.0)).a;
-        float s_right = texture(u_simState, v_uv + vec2( u_texelSize.x, 0.0)).a;
-        float s_up    = texture(u_simState, v_uv + vec2(0.0,  u_texelSize.y)).a;
-        float s_down  = texture(u_simState, v_uv + vec2(0.0, -u_texelSize.y)).a;
+        float s_l = texture(u_simState, v_uv + vec2(-u_texelSize.x, 0.0)).a;
+        float s_r = texture(u_simState, v_uv + vec2( u_texelSize.x, 0.0)).a;
+        float s_u = texture(u_simState, v_uv + vec2(0.0,  u_texelSize.y)).a;
+        float s_d = texture(u_simState, v_uv + vec2(0.0, -u_texelSize.y)).a;
         
         float step = 0.004;
-        float h = min(s_left, s_right);
-        float v = min(s_up, s_down);
+        float h = min(s_l, s_r);
+        float v = min(s_u, s_d);
         
-        // Rouy-Tourin scheme for smooth, non-faceted corners
         if (abs(h - v) < step) {
             currentSDF = 0.5 * (h + v + sqrt(max(0.0, 2.0 * step * step - (h - v) * (h - v))));
         } else {
