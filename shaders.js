@@ -355,14 +355,17 @@ void main() {
 
     color = linearToSrgb(acesFilm(color));
 
-    float highResAlpha = texColorRaw.a;
     float smoothedSDF = smoothstep(0.0, 0.06, sharpSDF); // Keep edge sharp
-    float finalAlphaMask = max(highResAlpha, smoothedSDF);
-
-    vec3 bgColor = texture(u_imageTexture, v_uv).rgb; 
-    float shadowIntensity = smoothstep(0.0, 0.12, length(bleedOffset)) * mask;
-    bgColor = mix(bgColor, vec3(0.0), shadowIntensity * 0.45); // Softened shadow multiplication on original background
     
-    fragColor = vec4(mix(bgColor, color, finalAlphaMask), 1.0);
+    // Blend transparent background pixels with the HTML page background color (#1a1a24)
+    vec3 pageBg = vec3(0.102, 0.102, 0.141);
+    vec4 origTex = texture(u_imageTexture, v_uv);
+    vec3 bgColor = mix(pageBg, origTex.rgb, origTex.a); 
+    
+    // Apply soft drop shadow to the background
+    float shadowIntensity = smoothstep(0.0, 0.12, length(bleedOffset)) * mask;
+    bgColor = mix(bgColor, vec3(0.0), shadowIntensity * 0.45);
+    
+    fragColor = vec4(mix(bgColor, color, smoothedSDF), 1.0);
 }
 `;
