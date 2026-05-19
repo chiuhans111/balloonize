@@ -85,44 +85,53 @@ void main() {
     float mask = center.b;
     float sdf = center.a; 
 
+    // 3x3 Kernel for the Hessian Matrix
     float u_left  = texture(u_simState, v_uv + vec2(-u_texelSize.x, 0.0)).r;
     float u_right = texture(u_simState, v_uv + vec2( u_texelSize.x, 0.0)).r;
     float u_up    = texture(u_simState, v_uv + vec2(0.0,  u_texelSize.y)).r;
     float u_down  = texture(u_simState, v_uv + vec2(0.0, -u_texelSize.y)).r;
     
+    float u_ul = texture(u_simState, v_uv + vec2(-u_texelSize.x,  u_texelSize.y)).r;
+    float u_ur = texture(u_simState, v_uv + vec2( u_texelSize.x,  u_texelSize.y)).r;
+    float u_dl = texture(u_simState, v_uv + vec2(-u_texelSize.x, -u_texelSize.y)).r;
+    float u_dr = texture(u_simState, v_uv + vec2( u_texelSize.x, -u_texelSize.y)).r;
+    
     float laplacian = (u_left + u_right + u_up + u_down) - 4.0 * u_t;
 
-    // FAT BALLOON PHYSICS
+    // --- GAUSSIAN CURVATURE REGULARIZER ---
+    // Calculate second partial derivatives
+    float z_xx = u_right + u_left - 2.0 * u_t;
+    float z_yy = u_up + u_down - 2.0 * u_t;
+    float z_xy = (u_ur + u_dl - u_ul - u_dr) * 0.25;
+
+    // Gaussian Curvature K = (z_xx * z_yy) - (z_xy)^2
+    float K = (z_xx * z_yy) - (z_xy * z_xy);
+    
+    // Developable Surface Penalty: Mylar wants K to be exactly 0.
+    // If K is high (forming a sphere or saddle), we aggressively damp the kinetic energy
+    // to force the waves to align into cylindrical folds.
+    float developablePenalty = clamp(abs(K) * 500.0, 0.0, 0.2);
+    
     float tension = 0.4 * mask;        
-    float pressure = 0.05 * mask;      // 10x higher pressure: keeps the balloon tightly inflated
-    float damping = 0.85;              // High damping instantly kills watery ripples
+    float pressure = 0.05 * mask;      
+    
+    // Apply the penalty to the structural damping
+    float damping = 0.85 - developablePenalty;              
     
     float acceleration = (tension * tension) * laplacian + pressure;
-
     float u_t_plus = 2.0 * u_t - u_t_minus + acceleration;
     u_t_plus *= damping;
 
-    // THICK POINTER SQUISH
     float brushRadius = 0.15;
     float distToPointer = length(v_uv - u_pointerPos);
-    
     if (distToPointer < brushRadius && abs(u_pointerForce) > 0.0) {
         float dentShape = pow(1.0 - (distToPointer / brushRadius), 2.0);
         u_t_plus -= abs(u_pointerForce) * dentShape * mask * 2.0; 
     }
 
-    // PERFECT DOME CONSTRAINT
-    // Lower exponent (0.35) makes the volume rise aggressively at the edges 
-    // and flatten at the top, creating a "full/stuffed" look.
     float plastic_limit = pow(sdf, 0.35) * 6.5; 
-    
-    if (u_t_plus > plastic_limit) {
-        u_t_plus = plastic_limit; 
-    }
-
-    if (sdf <= 0.0) {
-        u_t_plus = 0.0;
-    }
+    if (u_t_plus > plastic_limit) u_t_plus = plastic_limit; 
+    if (sdf <= 0.0) u_t_plus = 0.0;
 
     fragColor = vec4(u_t_plus, u_t, mask, sdf);
 }
@@ -138,112 +147,107 @@ uniform vec2 u_screenTexelSize;
 in vec2 v_uv;
 out vec4 fragColor;
 
-// 1. UPGRADED: HERMITE CUBIC INTERPOLATION
-// By applying a smoothstep curve to the fractional coordinate, we upgrade 
-// bilinear interpolation to smooth cubic interpolation. This makes the 1st derivative 
-// (the normals) continuous, completely eliminating faceted/pixelated specular highlights!
+vec3 srgbToLinear(vec3 color) { return pow(color, vec3(2.2)); }
+vec3 linearToSrgb(vec3 color) { return pow(color, vec3(1.0 / 2.2)); }
+vec3 acesFilm(vec3 x) {
+    float a = 2.51f; float b = 0.03f; float c = 2.43f; float d = 0.59f; float e = 0.14f;
+    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+}
+
 vec4 sampleSmooth(sampler2D tex, vec2 uv, vec2 texSize) {
     vec2 pixel = uv / texSize - 0.5;
     vec2 f = fract(pixel);
-    
-    // The magic line: Smooths the interpolation slope
     f = f * f * (3.0 - 2.0 * f); 
-    
     vec2 p0 = (floor(pixel) + 0.5) * texSize;
-    
     vec4 c00 = texture(tex, p0);
     vec4 c10 = texture(tex, p0 + vec2(texSize.x, 0.0));
     vec4 c01 = texture(tex, p0 + vec2(0.0, texSize.y));
     vec4 c11 = texture(tex, p0 + texSize);
-    
     return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 }
 
 float calcTotalDepth(float wave, float sdf) {
-    float edgeThickness = 30.0; // Looser edge thickness for smaller icons
-    float baseInflation = 0.85; // Massive increase in base artificial volume
-    float edge = clamp(sdf * edgeThickness, 0.0, 1.0);
-    float artificialDome = sqrt(max(0.0, 1.0 - pow(1.0 - edge, 2.0))) * baseInflation;
+    float baseInflation = 2.4; 
+    float safeSDF = max(sdf, 0.0); 
+    float artificialDome = pow(safeSDF, 0.45) * baseInflation;
     return wave + artificialDome;
+}
+
+// Extracted Crease Function to allow manual central differences
+float getCreases(vec2 uv, float wave, float sdf, float mask, vec2 tangent) {
+    vec2 noiseOffset = vec2(sin(uv.y * 8.0), cos(uv.x * 8.0)) * 0.02;
+    vec2 perturbedUV = uv + noiseOffset;
+    float crimpPhase = dot(perturbedUV * 70.0, tangent);
+    float buckleZone = smoothstep(0.06, 0.01, sdf) * smoothstep(-0.02, 0.04, sdf) * mask;
+    float ridge = 1.0 - pow(abs(sin(crimpPhase + wave * 2.0)), 1.5);
+    return (ridge * 2.0 - 1.0) * buckleZone * 0.04;
 }
 
 void main() {
     vec4 state = sampleSmooth(u_simState, v_uv, u_simTexelSize);
-    float wave = state.r;
-    float mask = state.b;
-    float sdf = state.a;
+    float wave = state.r; float mask = state.b; float sdf = state.a;
     
     vec4 st_left  = sampleSmooth(u_simState, v_uv - vec2(u_simTexelSize.x, 0.0), u_simTexelSize);
     vec4 st_right = sampleSmooth(u_simState, v_uv + vec2(u_simTexelSize.x, 0.0), u_simTexelSize);
     vec4 st_up    = sampleSmooth(u_simState, v_uv + vec2(0.0, u_simTexelSize.y), u_simTexelSize);
     vec4 st_down  = sampleSmooth(u_simState, v_uv - vec2(0.0, u_simTexelSize.y), u_simTexelSize);
     
-    vec2 edge_normal = normalize(vec2(st_left.b - st_right.b, st_down.b - st_up.b) + 0.0001);
+    vec2 slope_normal = normalize(vec2(st_left.a - st_right.a, st_down.a - st_up.a) + 0.0001);
+    vec2 tangent = vec2(-slope_normal.y, slope_normal.x);
+    
+    float creases = getCreases(v_uv, wave, sdf, mask, tangent);
 
-    vec2 bleedOffset = edge_normal * clamp(wave * 2.0, -1.0, 1.0) * u_simTexelSize;
+    vec2 bleedOffset = slope_normal * clamp(wave * 2.0, -1.0, 1.0) * u_simTexelSize;
     vec2 warpedUV = v_uv - bleedOffset;
-
-    vec2 tangent = vec2(-edge_normal.y, edge_normal.x);
-    float crimpPhase = dot(v_uv * 180.0, tangent);
-    float borderZone = smoothstep(1.0, 0.5, mask) * smoothstep(0.0, 0.3, mask);
-    float creases = sin(crimpPhase + wave * 8.0) * borderZone * 0.04;
 
     float h_left  = calcTotalDepth(st_left.r,  st_left.a);
     float h_right = calcTotalDepth(st_right.r, st_right.a);
     float h_up    = calcTotalDepth(st_up.r,    st_up.a);
     float h_down  = calcTotalDepth(st_down.r,  st_down.a);
     
-    float dZdx = ((h_right - h_left) * 0.5) + dFdx(creases); 
-    float dZdy = ((h_up - h_down) * 0.5) + dFdy(creases);
+    // Manual Central Differences for Creases (Bypasses dFdx Noise)
+    float c_left  = getCreases(v_uv - vec2(u_simTexelSize.x, 0.0), wave, sdf, mask, tangent);
+    float c_right = getCreases(v_uv + vec2(u_simTexelSize.x, 0.0), wave, sdf, mask, tangent);
+    float c_up    = getCreases(v_uv + vec2(0.0, u_simTexelSize.y), wave, sdf, mask, tangent);
+    float c_down  = getCreases(v_uv - vec2(0.0, u_simTexelSize.y), wave, sdf, mask, tangent);
     
-    // Lower Z-weight (0.07) forces the lighting engine to treat the slopes 
-    // as incredibly steep, maximizing the shiny, bursting, high-tension feel
-    vec3 normal = normalize(vec3(-dZdx, -dZdy, 0.07));
+    float dZdx = ((h_right - h_left) * 0.5) + ((c_right - c_left) * 0.5); 
+    float dZdy = ((h_up - h_down) * 0.5) + ((c_up - c_down) * 0.5);
+    
+    vec3 normal = normalize(vec3(-dZdx, -dZdy, 0.20));
     
     vec3 viewDir = vec3(0.0, 0.0, 1.0);
+    vec3 refVec = reflect(-viewDir, normal);
+    
+    vec4 texColorRaw = texture(u_imageTexture, warpedUV);
+    vec3 albedo = srgbToLinear(texColorRaw.rgb);
+    
+    vec3 envReflection = vec3(0.0);
+    envReflection += vec3(3.0) * smoothstep(0.6, 0.95, refVec.y);
+    envReflection += vec3(0.2, 0.15, 0.1) * smoothstep(-0.8, -0.4, refVec.y);
+    envReflection += vec3(0.5, 0.6, 0.8) * smoothstep(0.7, 1.0, abs(refVec.x));
+
+    float NdotV = max(dot(normal, viewDir), 0.0);
+    float fresnel = 0.04 + (1.0 - 0.04) * pow(1.0 - NdotV, 5.0);
+    
     vec3 mainLightDir = normalize(vec3(0.3, 0.7, 0.8));
-    vec3 halfMain = normalize(mainLightDir + viewDir);
-    float specMain = pow(max(dot(normal, halfMain), 0.0), 300.0) * 2.5; 
+    float diffuseFactor = max(dot(normal, mainLightDir), 0.0);
+    vec3 diffuseLight = vec3(1.2) * diffuseFactor + vec3(0.4); 
     
-    vec3 boxLightDir = normalize(vec3(-0.4, 0.6, 0.5));
-    vec3 halfBox = normalize(boxLightDir + viewDir);
-    float specBox = pow(max(dot(normal, halfBox), 0.0), 40.0) * 0.8;
+    float cavity = mix(0.6, 1.0, smoothstep(-0.02, 0.02, creases));
+    
+    vec3 color = albedo * diffuseLight * cavity;
+    color += envReflection * fresnel * cavity;
+    color = linearToSrgb(acesFilm(color));
 
-    vec3 rimLightDir = normalize(vec3(-0.8, -0.2, -0.5));
-    vec3 halfRim = normalize(rimLightDir + viewDir);
-    float specRim = pow(max(dot(normal, halfRim), 0.0), 60.0) * 0.4;
-    
-    float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 4.0);
-
-    vec4 texColor = texture(u_imageTexture, warpedUV);
-    float diffuse = max(dot(normal, mainLightDir), 0.0);
-    
-    vec3 finalColor = texColor.rgb * (diffuse * 0.4 + 0.7);
-    finalColor += vec3(specMain + specBox + specRim);
-    finalColor += (texColor.rgb + vec3(0.8)) * fresnel * 0.8;
-
-    // 2. PERFECT HIGH-RES EDGES (Source Alpha Masking)
-    // Instead of cutting the shape out using the low-res 256x256 SDF, 
-    // we extract the pristine, native anti-aliased alpha channel from the source image.
-    // Because it is sampled using 'warpedUV', the perfect edge moves organically with the physics!
-    float highResAlpha = texColor.a;
-    
-    // Fallback mask in case the input image is a solid JPEG with no alpha channel
+    float highResAlpha = texColorRaw.a;
     float smoothedSDF = smoothstep(0.0, 0.06, sdf);
-    
-    // Use the cleanest available mask
     float finalAlphaMask = max(highResAlpha, smoothedSDF);
 
-    // Render Contact Shadow & Background
-    vec3 bgColor = vec3(0.1); // Match the body background
+    vec3 bgColor = vec3(0.08); 
     float shadowIntensity = smoothstep(0.0, 0.15, length(bleedOffset)) * mask;
+    bgColor = mix(bgColor, vec3(0.0), shadowIntensity * 0.9);
     
-    // Darken background underneath the balloon based on distance
-    bgColor = mix(bgColor, vec3(0.0), shadowIntensity * 0.8);
-    
-    // Cleanly composite the balloon over the background using our perfect high-res alpha
-    finalColor = mix(bgColor, finalColor, finalAlphaMask);
-
-    fragColor = vec4(finalColor, 1.0);
+    fragColor = vec4(mix(bgColor, color, finalAlphaMask), 1.0);
 }
 `;

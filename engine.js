@@ -230,8 +230,8 @@ export class BalloonizeEngine {
     }
 
     startTrimLoop() {
-        // Run 100 passes to erode the mask inward to the shape boundaries and build SDF
-        for (let i = 0; i < 100; i++) {
+        // Run 150 passes to erode the mask inward to the shape boundaries and build SDF
+        for (let i = 0; i < 150; i++) {
             this.runPass(this.trimProgram, this.fboB, {
                 u_imageTexture: this.imageTex,
                 u_simState: this.simA,
