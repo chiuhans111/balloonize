@@ -27,6 +27,7 @@ export class BalloonizeEngine {
         
         this.inflationDepth = options.inflationDepth !== undefined ? options.inflationDepth : 1.0;
         this.entranceProgress = 1.0;
+        this.maskThreshold = options.maskThreshold !== undefined ? options.maskThreshold : 0.05;
 
         this.physicsParams = Object.assign({
             tension: 0.7,
@@ -42,6 +43,14 @@ export class BalloonizeEngine {
             specGlow: 1.0,
             rim: 0.5
         }, options.lightingParams || {});
+
+        this.debugParams = {
+            laplacian: true,
+            puff: true,
+            pointer: true,
+            curvature: true,
+            diffusion: true
+        };
         
         this.initGL();
         this.initTextures();
@@ -197,6 +206,13 @@ export class BalloonizeEngine {
         const slSpecCore = document.getElementById('slider-spec-core');
         const slSpecGlow = document.getElementById('slider-spec-glow');
         const slRim = document.getElementById('slider-rim');
+        const slMaskThreshold = document.getElementById('slider-mask-threshold');
+
+        const chkLaplacian = document.getElementById('chk-laplacian');
+        const chkPuff = document.getElementById('chk-puff');
+        const chkPointer = document.getElementById('chk-pointer');
+        const chkCurvature = document.getElementById('chk-curvature');
+        const chkDiffusion = document.getElementById('chk-diffusion');
         
         if (slTension) {
             // Initialize slider values to match the current parameter values (from constructor options)
@@ -211,7 +227,16 @@ export class BalloonizeEngine {
             slSpecCore.value = this.lightingParams.specCore;
             slSpecGlow.value = this.lightingParams.specGlow;
             slRim.value = this.lightingParams.rim;
+            if (slMaskThreshold) slMaskThreshold.value = this.maskThreshold;
 
+            if (chkLaplacian) {
+                chkLaplacian.checked = this.debugParams.laplacian;
+                chkPuff.checked = this.debugParams.puff;
+                chkPointer.checked = this.debugParams.pointer;
+                chkCurvature.checked = this.debugParams.curvature;
+                chkDiffusion.checked = this.debugParams.diffusion;
+            }
+ 
             const updateParams = () => {
                 if (slEffect) this.inflationDepth = parseFloat(slEffect.value);
                 this.physicsParams.tension = parseFloat(slTension.value);
@@ -220,11 +245,28 @@ export class BalloonizeEngine {
                 
                 this.lightingParams.env = parseFloat(slEnv.value);
                 this.lightingParams.az = parseFloat(slAz.value);
-                 this.lightingParams.el = parseFloat(slEl.value);
+                this.lightingParams.el = parseFloat(slEl.value);
                 this.lightingParams.specCore = parseFloat(slSpecCore.value);
                 this.lightingParams.specGlow = parseFloat(slSpecGlow.value);
                 this.lightingParams.rim = parseFloat(slRim.value);
+                
+                let maskThresholdChanged = false;
+                if (slMaskThreshold) {
+                    const newVal = parseFloat(slMaskThreshold.value);
+                    if (newVal !== this.maskThreshold) {
+                        this.maskThreshold = newVal;
+                        maskThresholdChanged = true;
+                    }
+                }
 
+                if (chkLaplacian) {
+                    this.debugParams.laplacian = chkLaplacian.checked;
+                    this.debugParams.puff = chkPuff.checked;
+                    this.debugParams.pointer = chkPointer.checked;
+                    this.debugParams.curvature = chkCurvature.checked;
+                    this.debugParams.diffusion = chkDiffusion.checked;
+                }
+ 
                 const elEf = document.getElementById('val-effect');
                 const elT = document.getElementById('val-tension');
                 const elD = document.getElementById('val-damping');
@@ -235,7 +277,8 @@ export class BalloonizeEngine {
                 const elSC = document.getElementById('val-spec-core');
                 const elSG = document.getElementById('val-spec-glow');
                 const elR = document.getElementById('val-rim');
-
+                const elMT = document.getElementById('val-mask-threshold');
+ 
                 if (elEf) elEf.innerText = this.inflationDepth.toFixed(2);
                 if (elT) elT.innerText = this.physicsParams.tension.toFixed(2);
                 if (elD) elD.innerText = this.physicsParams.damping.toFixed(2);
@@ -247,8 +290,13 @@ export class BalloonizeEngine {
                 if (elSC) elSC.innerText = this.lightingParams.specCore.toFixed(1);
                 if (elSG) elSG.innerText = this.lightingParams.specGlow.toFixed(1);
                 if (elR) elR.innerText = this.lightingParams.rim.toFixed(1);
-
-                this.wake();
+                if (elMT) elMT.innerText = this.maskThreshold.toFixed(2);
+ 
+                if (maskThresholdChanged) {
+                    this.recomputeMask(false);
+                } else {
+                    this.wake();
+                }
             };
             if (slEffect) slEffect.addEventListener('input', updateParams);
             slTension.addEventListener('input', updateParams);
@@ -261,6 +309,15 @@ export class BalloonizeEngine {
             slSpecCore.addEventListener('input', updateParams);
             slSpecGlow.addEventListener('input', updateParams);
             slRim.addEventListener('input', updateParams);
+            if (slMaskThreshold) slMaskThreshold.addEventListener('input', updateParams);
+
+            if (chkLaplacian) {
+                chkLaplacian.addEventListener('change', updateParams);
+                chkPuff.addEventListener('change', updateParams);
+                chkPointer.addEventListener('change', updateParams);
+                chkCurvature.addEventListener('change', updateParams);
+                chkDiffusion.addEventListener('change', updateParams);
+            }
             
             // Call once immediately to sync JS state with DOM (fixes browser form caching)
             updateParams();
@@ -331,6 +388,7 @@ export class BalloonizeEngine {
             const slSpecCore = document.getElementById('slider-spec-core');
             const slSpecGlow = document.getElementById('slider-spec-glow');
             const slRim = document.getElementById('slider-rim');
+            const slMaskThreshold = document.getElementById('slider-mask-threshold');
             
             if (slTension) {
                 if (slEffect) slEffect.removeEventListener('input', this.boundUpdateParams);
@@ -343,6 +401,7 @@ export class BalloonizeEngine {
                 slSpecCore.removeEventListener('input', this.boundUpdateParams);
                 slSpecGlow.removeEventListener('input', this.boundUpdateParams);
                 slRim.removeEventListener('input', this.boundUpdateParams);
+                if (slMaskThreshold) slMaskThreshold.removeEventListener('input', this.boundUpdateParams);
             }
         }
 
@@ -421,8 +480,9 @@ export class BalloonizeEngine {
                 u_imageTexture: this.imageTex,
                 u_simState: this.simA,
                 u_texelSize: [1.0 / this.simRes, 1.0 / this.simRes],
-                u_gradientThreshold: 0.15, // Slightly higher to ensure it stops at sharp edges
-                u_hasTransparency: this.hasTransparency ? 1.0 : 0.0
+                u_maskThreshold: this.maskThreshold,
+                u_hasTransparency: this.hasTransparency ? 1.0 : 0.0,
+                u_maxBgDiff: this.maxBgDiff !== undefined ? this.maxBgDiff : 0.5
             });
             this.swapPingPong();
         }
@@ -434,7 +494,12 @@ export class BalloonizeEngine {
             u_texelSize: [1.0 / this.simRes, 1.0 / this.simRes],
             u_pointerPos: [0.0, 0.0],
             u_pointerForce: 0.0,
-            u_pressure: 0.0
+            u_pressure: 0.0,
+            u_enableLaplacian: 0.0,
+            u_enablePuff: 0.0,
+            u_enablePointer: 0.0,
+            u_enableCurvature: 0.0,
+            u_enableDiffusion: 0.0
         });
         
         this.renderComposite();
@@ -450,12 +515,21 @@ export class BalloonizeEngine {
     loop() {
         if (this.entranceProgress === undefined) this.entranceProgress = 1.0;
 
-        let currentPressure = 0.05;
+        let currentPressure = 0.06;
         if (this.entranceProgress < 1.0) {
             this.entranceProgress = Math.min(1.0, this.entranceProgress + 0.0125); // Pop breath and scan wave over 80 frames (~1.3s)
-            currentPressure = 0.05 * this.entranceProgress;
+            // Over-inflate slightly (1.1x) to give it a "stretchy" pop look
+            currentPressure = 0.06 * (this.entranceProgress * 1.1); 
             
             this.consecutiveIdleFrames = 0; // Prevent sleeping during the pop transition
+        }
+        // Decay the force automatically so the bubble doesn't "feed" on itself
+        if (this.isInteracting) {
+            // Keep the force alive but decaying slightly while dragging
+            this.pointerForce = Math.max(0.1, this.pointerForce * 0.95);
+        } else {
+            // Decay the hover force to 0.0 when mouse stops moving
+            this.pointerForce = Math.max(0.0, this.pointerForce * 0.92);
         }
 
         // 1. Wave Solver Pass
@@ -467,7 +541,12 @@ export class BalloonizeEngine {
             u_tension: this.physicsParams ? this.physicsParams.tension : 0.5,
             u_damping: this.physicsParams ? this.physicsParams.damping : 0.75,
             u_diffusion: this.physicsParams ? this.physicsParams.diffusion : 0.15,
-            u_pressure: currentPressure
+            u_pressure: currentPressure,
+            u_enableLaplacian: this.debugParams.laplacian ? 1.0 : 0.0,
+            u_enablePuff: this.debugParams.puff ? 1.0 : 0.0,
+            u_enablePointer: this.debugParams.pointer ? 1.0 : 0.0,
+            u_enableCurvature: this.debugParams.curvature ? 1.0 : 0.0,
+            u_enableDiffusion: this.debugParams.diffusion ? 1.0 : 0.0
         });
 
         if (this.isInteracting) {
@@ -521,7 +600,97 @@ export class BalloonizeEngine {
         });
     }
 
-    recomputeMask() {
+    calculateOptimalThreshold(imgData, w, h) {
+        // 1. Sample 4 corners slightly inset to establish the global background color
+        const corners = [
+            (Math.floor(h * 0.05) * w + Math.floor(w * 0.05)) * 4,
+            (Math.floor(h * 0.05) * w + Math.floor(w * 0.95)) * 4,
+            (Math.floor(h * 0.95) * w + Math.floor(w * 0.05)) * 4,
+            (Math.floor(h * 0.95) * w + Math.floor(w * 0.95)) * 4
+        ];
+        
+        let bgR = 0, bgG = 0, bgB = 0;
+        corners.forEach(idx => {
+            bgR += imgData[idx]; bgG += imgData[idx+1]; bgB += imgData[idx+2];
+        });
+        bgR /= 4; bgG /= 4; bgB /= 4;
+
+        // 2. Calculate Background Color Differences (for Indestructible Core Failsafe)
+        let maxBgDist = 0;
+        for (let i = 0; i < imgData.length; i += 4) {
+            let r = imgData[i], g = imgData[i+1], b = imgData[i+2];
+            let rMean = (r + bgR) * 0.5;
+            let dR = r - bgR, dG = g - bgG, dB = b - bgB;
+            let weightR = 2.0 + rMean / 256.0;
+            let weightG = 4.0;
+            let weightB = 2.0 + (255.0 - rMean) / 256.0;
+            
+            let dist = Math.sqrt(weightR * dR * dR + weightG * dG * dG + weightB * dB * dB);
+            if (dist > maxBgDist) maxBgDist = dist;
+        }
+        this.maxBgDiff = maxBgDist / 765.0; // Normalized to 0.0 - 1.0 color distance
+
+        // 3. Calculate Perceptual Gradients (Sobel-style approximation)
+        let gradHist = new Array(256).fill(0);
+        for (let y = 1; y < h - 1; y++) {
+            for (let x = 1; x < w - 1; x++) {
+                let idx = (y * w + x) * 4;
+                let idxR = (y * w + (x + 1)) * 4;
+                let idxD = ((y + 1) * w + x) * 4;
+
+                let r1 = imgData[idx], g1 = imgData[idx+1], b1 = imgData[idx+2];
+                let rR = imgData[idxR], gR = imgData[idxR+1], bR = imgData[idxR+2];
+                let rD = imgData[idxD], gD = imgData[idxD+1], bD = imgData[idxD+2];
+
+                let dXr = r1 - rR, dXg = g1 - gR, dXb = b1 - bR;
+                let dYr = r1 - rD, dYg = g1 - gD, dYb = b1 - bD;
+
+                let gradX = Math.sqrt(dXr * dXr + dXg * dXg + dXb * dXb);
+                let gradY = Math.sqrt(dYr * dYr + dYg * dYg + dYb * dYb);
+                let gradMagnitude = Math.sqrt(gradX * gradX + gradY * gradY);
+
+                let bin = Math.min(255, Math.floor((gradMagnitude / 442.0) * 255));
+                gradHist[bin]++;
+            }
+        }
+
+        // 4. MSER-Inspired Stability Search (Finding the Plateau)
+        // We look for the threshold 't' where changing 't' adds the fewest new edge pixels.
+        // This corresponds to a deep valley in the gradient histogram.
+        
+        // Apply a slight Gaussian smooth to the histogram to ignore micro-spikes
+        let smoothedHist = new Array(256).fill(0);
+        for(let i = 2; i < 254; i++) {
+            smoothedHist[i] = (gradHist[i-2] + gradHist[i-1]*2 + gradHist[i]*4 + gradHist[i+1]*2 + gradHist[i+2]) / 10.0;
+        }
+
+        let bestThresholdBin = 10; // Start slightly above 0 to ignore raw JPEG noise floor
+        let minChange = Infinity;
+        let stabilityRun = 0;
+        
+        // Scan from the noise floor up to the 60% mark
+        for (let i = 15; i < 180; i++) {
+            let rateOfChange = smoothedHist[i]; 
+            
+            if (rateOfChange < minChange) {
+                minChange = rateOfChange;
+                bestThresholdBin = i;
+                stabilityRun = 0;
+            } else if (rateOfChange === minChange) {
+                // If we are on a perfectly flat plateau, pick the middle of the plateau
+                stabilityRun++;
+                bestThresholdBin = i - Math.floor(stabilityRun / 2);
+            }
+        }
+        
+        // Return normalized threshold with a slight safety buffer pushing it to the upper edge of the plateau,
+        // enforcing a minimum of 0.05.
+        const result = Math.max(0.05, (bestThresholdBin + 15) / 255.0);
+        console.log("Calculated optimal MSER threshold:", result);
+        return result;
+    }
+
+    recomputeMask(resetThreshold = true) {
         if (!this.loadedImage) return;
 
         const gl = this.gl;
@@ -530,7 +699,7 @@ export class BalloonizeEngine {
         const tmpCanvas = document.createElement('canvas');
         tmpCanvas.width = this.simRes;
         tmpCanvas.height = this.simRes;
-        const ctx = tmpCanvas.getContext('2d');
+        const ctx = tmpCanvas.getContext('2d', { willReadFrequently: true });
         ctx.drawImage(this.loadedImage, 0, 0, this.simRes, this.simRes);
         const imgData = ctx.getImageData(0, 0, this.simRes, this.simRes).data;
         
@@ -542,6 +711,18 @@ export class BalloonizeEngine {
             }
         }
         this.hasTransparency = hasTransparency;
+
+        if (resetThreshold) {
+            // Calculate SOTA Perceptual Otsu Threshold on CPU
+            this.optimalOtsuThreshold = this.calculateOptimalThreshold(imgData, this.simRes, this.simRes);
+            this.maskThreshold = Math.min(0.5, this.optimalOtsuThreshold);
+            const slMaskThreshold = document.getElementById('slider-mask-threshold');
+            if (slMaskThreshold) {
+                slMaskThreshold.value = this.maskThreshold;
+                const elMT = document.getElementById('val-mask-threshold');
+                if (elMT) elMT.innerText = this.maskThreshold.toFixed(2);
+            }
+        }
 
         // Initialize simulation state A with a bounding box mask
         const initData = new Float32Array(this.simRes * this.simRes * 4);
