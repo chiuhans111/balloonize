@@ -137,15 +137,32 @@ uniform vec2 u_screenTexelSize;
 in vec2 v_uv;
 out vec4 fragColor;
 
+// 1. MANUAL BILINEAR FILTER
+// Smooths the low-res 256x256 NEAREST texture into a continuous high-res field
+vec4 sampleSmooth(sampler2D tex, vec2 uv, vec2 texSize) {
+    vec2 pixel = uv / texSize - 0.5;
+    vec2 f = fract(pixel);
+    vec2 p0 = (floor(pixel) + 0.5) * texSize;
+    
+    vec4 c00 = texture(tex, p0);
+    vec4 c10 = texture(tex, p0 + vec2(texSize.x, 0.0));
+    vec4 c01 = texture(tex, p0 + vec2(0.0, texSize.y));
+    vec4 c11 = texture(tex, p0 + texSize);
+    
+    return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
+}
+
 void main() {
-    vec4 state = texture(u_simState, v_uv);
+    // Read perfectly smoothed states instead of blocky pixels
+    vec4 state = sampleSmooth(u_simState, v_uv, u_simTexelSize);
     float wave = state.r;
     float mask = state.b;
+    float sdf = state.a;
     
-    float m_left  = texture(u_simState, v_uv + vec2(-u_simTexelSize.x, 0.0)).b;
-    float m_right = texture(u_simState, v_uv + vec2( u_simTexelSize.x, 0.0)).b;
-    float m_up    = texture(u_simState, v_uv + vec2(0.0,  u_simTexelSize.y)).b;
-    float m_down  = texture(u_simState, v_uv + vec2(0.0, -u_simTexelSize.y)).b;
+    float m_left  = sampleSmooth(u_simState, v_uv - vec2(u_simTexelSize.x, 0.0), u_simTexelSize).b;
+    float m_right = sampleSmooth(u_simState, v_uv + vec2(u_simTexelSize.x, 0.0), u_simTexelSize).b;
+    float m_up    = sampleSmooth(u_simState, v_uv + vec2(0.0, u_simTexelSize.y), u_simTexelSize).b;
+    float m_down  = sampleSmooth(u_simState, v_uv - vec2(0.0, u_simTexelSize.y), u_simTexelSize).b;
     
     vec2 edge_normal = normalize(vec2(m_left - m_right, m_down - m_up) + 0.0001);
 
@@ -157,45 +174,59 @@ void main() {
     float borderZone = smoothstep(1.0, 0.5, mask) * smoothstep(0.0, 0.3, mask);
     float creases = sin(crimpPhase + wave * 8.0) * borderZone * 0.04;
 
-    float w_left = texture(u_simState, v_uv + vec2(-u_simTexelSize.x, 0.0)).r;
-    float w_right = texture(u_simState, v_uv + vec2(u_simTexelSize.x, 0.0)).r;
-    float w_up = texture(u_simState, v_uv + vec2(0.0, u_simTexelSize.y)).r;
-    float w_down = texture(u_simState, v_uv + vec2(0.0, -u_simTexelSize.y)).r;
+    // Calculate pristine, anti-aliased surface normals from the smoothed height map
+    float w_left = sampleSmooth(u_simState, v_uv - vec2(u_simTexelSize.x, 0.0), u_simTexelSize).r;
+    float w_right = sampleSmooth(u_simState, v_uv + vec2(u_simTexelSize.x, 0.0), u_simTexelSize).r;
+    float w_up = sampleSmooth(u_simState, v_uv + vec2(0.0, u_simTexelSize.y), u_simTexelSize).r;
+    float w_down = sampleSmooth(u_simState, v_uv - vec2(0.0, u_simTexelSize.y), u_simTexelSize).r;
     
     float dZdx = ((w_right - w_left) * 0.5) + dFdx(creases); 
     float dZdy = ((w_up - w_down) * 0.5) + dFdy(creases);
     
-    // CRITICAL VISUAL FIX: Z-weight increased to 0.25 makes the surface look fat and smoothly rounded
-    vec3 normal = normalize(vec3(-dZdx, -dZdy, 0.25));
+    // Z-weight set for thick, rounded plastic
+    vec3 normal = normalize(vec3(-dZdx, -dZdy, 0.18));
     
-    // DUAL STUDIO LIGHTING (Mylar balloon look)
-    vec3 mainLightDir = normalize(vec3(0.4, 0.8, 1.0));
-    vec3 fillLightDir = normalize(vec3(-0.6, -0.4, 0.5));
+    // 2. MYLAR PLASTIC STUDIO LIGHTING
     vec3 viewDir = vec3(0.0, 0.0, 1.0);
     
+    // Key Light (Sharp, intense flash)
+    vec3 mainLightDir = normalize(vec3(0.3, 0.7, 0.8));
     vec3 halfMain = normalize(mainLightDir + viewDir);
-    vec3 halfFill = normalize(fillLightDir + viewDir);
+    float specMain = pow(max(dot(normal, halfMain), 0.0), 300.0) * 2.5; 
     
-    float diffuse = max(dot(normal, mainLightDir), 0.0);
-    float bounce = max(dot(normal, fillLightDir), 0.0) * 0.3; // Soft ambient fill
+    // Box Light (Broad, soft studio reflection)
+    vec3 boxLightDir = normalize(vec3(-0.4, 0.6, 0.5));
+    vec3 halfBox = normalize(boxLightDir + viewDir);
+    float specBox = pow(max(dot(normal, halfBox), 0.0), 40.0) * 0.8;
+
+    // Rim Light (Floor/environment bounce for volume)
+    vec3 rimLightDir = normalize(vec3(-0.8, -0.2, -0.5));
+    vec3 halfRim = normalize(rimLightDir + viewDir);
+    float specRim = pow(max(dot(normal, halfRim), 0.0), 60.0) * 0.4;
     
-    float specMain = pow(max(dot(normal, halfMain), 0.0), 150.0) * 1.5; // Sharp key highlight
-    float specFill = pow(max(dot(normal, halfFill), 0.0), 50.0) * 0.5;  // Broad fill highlight
-    
-    // EDGE FRESNEL (Plastic Sheen)
-    float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 3.0);
+    // Edge Fresnel (The glowing plastic wrap rim)
+    float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 4.0);
 
     vec4 texColor = texture(u_imageTexture, warpedUV);
+    float diffuse = max(dot(normal, mainLightDir), 0.0);
     
-    // Composite: Color + Lighting + Highlights + Sheen
-    vec3 finalColor = texColor.rgb * (diffuse * 0.6 + bounce + 0.5);
-    finalColor += vec3(specMain + specFill);
-    finalColor += (texColor.rgb + 0.5) * fresnel * 0.6; 
+    // High ambient keeps the base colors saturated and bright
+    vec3 finalColor = texColor.rgb * (diffuse * 0.4 + 0.7);
+    
+    // Add all specular reflections additively
+    finalColor += vec3(specMain + specBox + specRim);
+    
+    // Add Fresnel glow
+    finalColor += (texColor.rgb + vec3(0.8)) * fresnel * 0.8;
 
-    float softMask = texture(u_simState, warpedUV).b;
-    if (softMask < 0.99) {
-        float shadowIntensity = smoothstep(0.0, 0.1, length(bleedOffset)) * mask;
-        finalColor = mix(vec3(0.1), finalColor, 1.0 - shadowIntensity);
+    // 3. PERFECT ANTI-ALIASED EDGES
+    // Uses the bilinearly smoothed SDF to generate a razor-sharp vector mask
+    float aaMask = smoothstep(0.0, 0.02, sdf + (wave * 0.01));
+
+    if (aaMask < 0.99) {
+        float shadowIntensity = smoothstep(0.0, 0.15, length(bleedOffset)) * mask;
+        vec3 bgColor = vec3(0.1); // Match the dark layout background
+        finalColor = mix(bgColor, finalColor, max(aaMask, 1.0 - shadowIntensity));
     }
 
     fragColor = vec4(finalColor, 1.0);
