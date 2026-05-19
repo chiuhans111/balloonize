@@ -112,8 +112,9 @@ void main() {
     }
 
     // PERFECT DOME CONSTRAINT
-    // Using a square root of the distance field creates a mathematically perfect, fat round dome
-    float plastic_limit = pow(sdf, 0.5) * 5.0; 
+    // Lower exponent (0.35) makes the volume rise aggressively at the edges 
+    // and flatten at the top, creating a "full/stuffed" look.
+    float plastic_limit = pow(sdf, 0.35) * 6.5; 
     
     if (u_t_plus > plastic_limit) {
         u_t_plus = plastic_limit; 
@@ -137,11 +138,17 @@ uniform vec2 u_screenTexelSize;
 in vec2 v_uv;
 out vec4 fragColor;
 
-// 1. MANUAL BILINEAR FILTER
-// Smooths the low-res 256x256 NEAREST texture into a continuous high-res field
+// 1. UPGRADED: HERMITE CUBIC INTERPOLATION
+// By applying a smoothstep curve to the fractional coordinate, we upgrade 
+// bilinear interpolation to smooth cubic interpolation. This makes the 1st derivative 
+// (the normals) continuous, completely eliminating faceted/pixelated specular highlights!
 vec4 sampleSmooth(sampler2D tex, vec2 uv, vec2 texSize) {
     vec2 pixel = uv / texSize - 0.5;
     vec2 f = fract(pixel);
+    
+    // The magic line: Smooths the interpolation slope
+    f = f * f * (3.0 - 2.0 * f); 
+    
     vec2 p0 = (floor(pixel) + 0.5) * texSize;
     
     vec4 c00 = texture(tex, p0);
@@ -152,19 +159,26 @@ vec4 sampleSmooth(sampler2D tex, vec2 uv, vec2 texSize) {
     return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 }
 
+float calcTotalDepth(float wave, float sdf) {
+    float edgeThickness = 30.0; // Looser edge thickness for smaller icons
+    float baseInflation = 0.85; // Massive increase in base artificial volume
+    float edge = clamp(sdf * edgeThickness, 0.0, 1.0);
+    float artificialDome = sqrt(max(0.0, 1.0 - pow(1.0 - edge, 2.0))) * baseInflation;
+    return wave + artificialDome;
+}
+
 void main() {
-    // Read perfectly smoothed states instead of blocky pixels
     vec4 state = sampleSmooth(u_simState, v_uv, u_simTexelSize);
     float wave = state.r;
     float mask = state.b;
     float sdf = state.a;
     
-    float m_left  = sampleSmooth(u_simState, v_uv - vec2(u_simTexelSize.x, 0.0), u_simTexelSize).b;
-    float m_right = sampleSmooth(u_simState, v_uv + vec2(u_simTexelSize.x, 0.0), u_simTexelSize).b;
-    float m_up    = sampleSmooth(u_simState, v_uv + vec2(0.0, u_simTexelSize.y), u_simTexelSize).b;
-    float m_down  = sampleSmooth(u_simState, v_uv - vec2(0.0, u_simTexelSize.y), u_simTexelSize).b;
+    vec4 st_left  = sampleSmooth(u_simState, v_uv - vec2(u_simTexelSize.x, 0.0), u_simTexelSize);
+    vec4 st_right = sampleSmooth(u_simState, v_uv + vec2(u_simTexelSize.x, 0.0), u_simTexelSize);
+    vec4 st_up    = sampleSmooth(u_simState, v_uv + vec2(0.0, u_simTexelSize.y), u_simTexelSize);
+    vec4 st_down  = sampleSmooth(u_simState, v_uv - vec2(0.0, u_simTexelSize.y), u_simTexelSize);
     
-    vec2 edge_normal = normalize(vec2(m_left - m_right, m_down - m_up) + 0.0001);
+    vec2 edge_normal = normalize(vec2(st_left.b - st_right.b, st_down.b - st_up.b) + 0.0001);
 
     vec2 bleedOffset = edge_normal * clamp(wave * 2.0, -1.0, 1.0) * u_simTexelSize;
     vec2 warpedUV = v_uv - bleedOffset;
@@ -174,60 +188,61 @@ void main() {
     float borderZone = smoothstep(1.0, 0.5, mask) * smoothstep(0.0, 0.3, mask);
     float creases = sin(crimpPhase + wave * 8.0) * borderZone * 0.04;
 
-    // Calculate pristine, anti-aliased surface normals from the smoothed height map
-    float w_left = sampleSmooth(u_simState, v_uv - vec2(u_simTexelSize.x, 0.0), u_simTexelSize).r;
-    float w_right = sampleSmooth(u_simState, v_uv + vec2(u_simTexelSize.x, 0.0), u_simTexelSize).r;
-    float w_up = sampleSmooth(u_simState, v_uv + vec2(0.0, u_simTexelSize.y), u_simTexelSize).r;
-    float w_down = sampleSmooth(u_simState, v_uv - vec2(0.0, u_simTexelSize.y), u_simTexelSize).r;
+    float h_left  = calcTotalDepth(st_left.r,  st_left.a);
+    float h_right = calcTotalDepth(st_right.r, st_right.a);
+    float h_up    = calcTotalDepth(st_up.r,    st_up.a);
+    float h_down  = calcTotalDepth(st_down.r,  st_down.a);
     
-    float dZdx = ((w_right - w_left) * 0.5) + dFdx(creases); 
-    float dZdy = ((w_up - w_down) * 0.5) + dFdy(creases);
+    float dZdx = ((h_right - h_left) * 0.5) + dFdx(creases); 
+    float dZdy = ((h_up - h_down) * 0.5) + dFdy(creases);
     
-    // Z-weight set for thick, rounded plastic
-    vec3 normal = normalize(vec3(-dZdx, -dZdy, 0.18));
+    // Lower Z-weight (0.07) forces the lighting engine to treat the slopes 
+    // as incredibly steep, maximizing the shiny, bursting, high-tension feel
+    vec3 normal = normalize(vec3(-dZdx, -dZdy, 0.07));
     
-    // 2. MYLAR PLASTIC STUDIO LIGHTING
     vec3 viewDir = vec3(0.0, 0.0, 1.0);
-    
-    // Key Light (Sharp, intense flash)
     vec3 mainLightDir = normalize(vec3(0.3, 0.7, 0.8));
     vec3 halfMain = normalize(mainLightDir + viewDir);
     float specMain = pow(max(dot(normal, halfMain), 0.0), 300.0) * 2.5; 
     
-    // Box Light (Broad, soft studio reflection)
     vec3 boxLightDir = normalize(vec3(-0.4, 0.6, 0.5));
     vec3 halfBox = normalize(boxLightDir + viewDir);
     float specBox = pow(max(dot(normal, halfBox), 0.0), 40.0) * 0.8;
 
-    // Rim Light (Floor/environment bounce for volume)
     vec3 rimLightDir = normalize(vec3(-0.8, -0.2, -0.5));
     vec3 halfRim = normalize(rimLightDir + viewDir);
     float specRim = pow(max(dot(normal, halfRim), 0.0), 60.0) * 0.4;
     
-    // Edge Fresnel (The glowing plastic wrap rim)
     float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 4.0);
 
     vec4 texColor = texture(u_imageTexture, warpedUV);
     float diffuse = max(dot(normal, mainLightDir), 0.0);
     
-    // High ambient keeps the base colors saturated and bright
     vec3 finalColor = texColor.rgb * (diffuse * 0.4 + 0.7);
-    
-    // Add all specular reflections additively
     finalColor += vec3(specMain + specBox + specRim);
-    
-    // Add Fresnel glow
     finalColor += (texColor.rgb + vec3(0.8)) * fresnel * 0.8;
 
-    // 3. PERFECT ANTI-ALIASED EDGES
-    // Uses the bilinearly smoothed SDF to generate a razor-sharp vector mask
-    float aaMask = smoothstep(0.0, 0.02, sdf + (wave * 0.01));
+    // 2. PERFECT HIGH-RES EDGES (Source Alpha Masking)
+    // Instead of cutting the shape out using the low-res 256x256 SDF, 
+    // we extract the pristine, native anti-aliased alpha channel from the source image.
+    // Because it is sampled using 'warpedUV', the perfect edge moves organically with the physics!
+    float highResAlpha = texColor.a;
+    
+    // Fallback mask in case the input image is a solid JPEG with no alpha channel
+    float smoothedSDF = smoothstep(0.0, 0.06, sdf);
+    
+    // Use the cleanest available mask
+    float finalAlphaMask = max(highResAlpha, smoothedSDF);
 
-    if (aaMask < 0.99) {
-        float shadowIntensity = smoothstep(0.0, 0.15, length(bleedOffset)) * mask;
-        vec3 bgColor = vec3(0.1); // Match the dark layout background
-        finalColor = mix(bgColor, finalColor, max(aaMask, 1.0 - shadowIntensity));
-    }
+    // Render Contact Shadow & Background
+    vec3 bgColor = vec3(0.1); // Match the body background
+    float shadowIntensity = smoothstep(0.0, 0.15, length(bleedOffset)) * mask;
+    
+    // Darken background underneath the balloon based on distance
+    bgColor = mix(bgColor, vec3(0.0), shadowIntensity * 0.8);
+    
+    // Cleanly composite the balloon over the background using our perfect high-res alpha
+    finalColor = mix(bgColor, finalColor, finalAlphaMask);
 
     fragColor = vec4(finalColor, 1.0);
 }
