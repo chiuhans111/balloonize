@@ -18,6 +18,7 @@ uniform vec2 u_imageTexelSize;
 uniform float u_gradientThreshold;
 uniform float u_hasTransparency;
 uniform float u_isCleanupPass;
+uniform vec3 u_bgColor;
 
 in vec2 v_uv;
 out vec4 fragColor;
@@ -34,21 +35,14 @@ void main() {
 
     vec4 sourceImg = texture(u_imageTexture, v_uv);
     
-    // Sample 4 corners slightly inset to estimate background color
-    vec3 bg1 = texture(u_imageTexture, vec2(0.05, 0.05)).rgb;
-    vec3 bg2 = texture(u_imageTexture, vec2(0.95, 0.05)).rgb;
-    vec3 bg3 = texture(u_imageTexture, vec2(0.05, 0.95)).rgb;
-    vec3 bg4 = texture(u_imageTexture, vec2(0.95, 0.95)).rgb;
-    vec3 globalBg = (bg1 + bg2 + bg3 + bg4) * 0.25;
-    
-    float diffFromBg = distance(sourceImg.rgb, globalBg);
+    float diffFromBg = distance(sourceImg.rgb, u_bgColor);
 
-    // Compute luminance gradient with a 2.0 texel step to filter high-frequency noise
+    // Compute luminance gradient with a 1.0 texel step to detect sharp borders
     vec3 lumaCoef = vec3(0.299, 0.587, 0.114);
-    float l_l = dot(texture(u_imageTexture, v_uv + vec2(-u_texelSize.x * 2.0, 0.0)).rgb, lumaCoef);
-    float l_r = dot(texture(u_imageTexture, v_uv + vec2( u_texelSize.x * 2.0, 0.0)).rgb, lumaCoef);
-    float l_u = dot(texture(u_imageTexture, v_uv + vec2(0.0,  u_texelSize.y * 2.0)).rgb, lumaCoef);
-    float l_d = dot(texture(u_imageTexture, v_uv + vec2(0.0, -u_texelSize.y * 2.0)).rgb, lumaCoef);
+    float l_l = dot(texture(u_imageTexture, v_uv + vec2(-u_texelSize.x, 0.0)).rgb, lumaCoef);
+    float l_r = dot(texture(u_imageTexture, v_uv + vec2( u_texelSize.x, 0.0)).rgb, lumaCoef);
+    float l_u = dot(texture(u_imageTexture, v_uv + vec2(0.0,  u_texelSize.y)).rgb, lumaCoef);
+    float l_d = dot(texture(u_imageTexture, v_uv + vec2(0.0, -u_texelSize.y)).rgb, lumaCoef);
     
     float grad = length(vec2(l_l - l_r, l_d - l_u));
 
@@ -57,7 +51,48 @@ void main() {
     float m_u = texture(u_simState, v_uv + vec2(0.0,  u_texelSize.y)).b;
     float m_d = texture(u_simState, v_uv + vec2(0.0, -u_texelSize.y)).b;
 
-    float edgeProximity = 4.0 - (m_l + m_r + m_u + m_d);
+    // A neighbor is a valid background propagator only if its mask is 0.0 AND it matches background color/transparency
+    float isBg_l = 0.0;
+    if (m_l == 0.0) {
+        if (u_hasTransparency > 0.5) {
+            if (texture(u_imageTexture, v_uv + vec2(-u_texelSize.x, 0.0)).a < 0.1) isBg_l = 1.0;
+        } else {
+            vec3 col_l = texture(u_imageTexture, v_uv + vec2(-u_texelSize.x, 0.0)).rgb;
+            if (distance(col_l, u_bgColor) < u_gradientThreshold * 1.5) isBg_l = 1.0;
+        }
+    }
+
+    float isBg_r = 0.0;
+    if (m_r == 0.0) {
+        if (u_hasTransparency > 0.5) {
+            if (texture(u_imageTexture, v_uv + vec2(u_texelSize.x, 0.0)).a < 0.1) isBg_r = 1.0;
+        } else {
+            vec3 col_r = texture(u_imageTexture, v_uv + vec2(u_texelSize.x, 0.0)).rgb;
+            if (distance(col_r, u_bgColor) < u_gradientThreshold * 1.5) isBg_r = 1.0;
+        }
+    }
+
+    float isBg_u = 0.0;
+    if (m_u == 0.0) {
+        if (u_hasTransparency > 0.5) {
+            if (texture(u_imageTexture, v_uv + vec2(0.0, u_texelSize.y)).a < 0.1) isBg_u = 1.0;
+        } else {
+            vec3 col_u = texture(u_imageTexture, v_uv + vec2(0.0, u_texelSize.y)).rgb;
+            if (distance(col_u, u_bgColor) < u_gradientThreshold * 1.5) isBg_u = 1.0;
+        }
+    }
+
+    float isBg_d = 0.0;
+    if (m_d == 0.0) {
+        if (u_hasTransparency > 0.5) {
+            if (texture(u_imageTexture, v_uv + vec2(0.0, -u_texelSize.y)).a < 0.1) isBg_d = 1.0;
+        } else {
+            vec3 col_d = texture(u_imageTexture, v_uv + vec2(0.0, -u_texelSize.y)).rgb;
+            if (distance(col_d, u_bgColor) < u_gradientThreshold * 1.5) isBg_d = 1.0;
+        }
+    }
+
+    float edgeProximity = isBg_l + isBg_r + isBg_u + isBg_d;
     
     if (edgeProximity > 0.0) {
         // Trim isolated noise dots (morphological cleanup)
