@@ -459,16 +459,13 @@ export class BalloonizeEngine {
 
         // Run 150 passes to erode mask inward to shape boundaries and build SDF
         for (let i = 0; i < 150; i++) {
-            const isCleanup = (i >= 147) ? 1.0 : 0.0;
             this.runPass(this.trimProgram, this.fboB, {
                 u_imageTexture: this.imageTex,
                 u_simState: this.simA,
                 u_texelSize: [1.0 / this.simRes, 1.0 / this.simRes],
                 u_imageTexelSize: [1.0 / this.loadedImage.width, 1.0 / this.loadedImage.height],
                 u_gradientThreshold: gpuThreshold,
-                u_hasTransparency: this.hasTransparency ? 1.0 : 0.0,
-                u_isCleanupPass: isCleanup,
-                u_bgColor: this.bgColor || [1.0, 1.0, 1.0]
+                u_hasTransparency: this.hasTransparency ? 1.0 : 0.0
             });
             this.swapPingPong();
         }
@@ -601,33 +598,22 @@ export class BalloonizeEngine {
             }
         }
 
-        // 3. Compute gradients (using a symmetrical 2-pixel step) and color difference from background
+        // 3. Compute gradients (using a symmetrical 2-pixel step)
         const grad = new Float32Array(size);
-        const diffFromBg = new Float32Array(size);
-        const bg = this.bgColor || [1.0, 1.0, 1.0];
         for (let y = 0; y < height; y++) {
             for (let x = 0; x < width; x++) {
                 const idx = y * width + x;
-                const l_left  = lum[y * width + Math.max(0, x - 1)];
-                const l_right = lum[y * width + Math.min(width - 1, x + 1)];
-                const l_up    = lum[Math.min(height - 1, y + 1) * width + x];
-                const l_down  = lum[Math.max(0, y - 1) * width + x];
+                const l_left  = lum[y * width + Math.max(0, x - 2)];
+                const l_right = lum[y * width + Math.min(width - 1, x + 2)];
+                const l_up    = lum[Math.min(height - 1, y + 2) * width + x];
+                const l_down  = lum[Math.max(0, y - 2) * width + x];
                 const dx = l_left - l_right;
                 const dy = l_down - l_up;
                 grad[idx] = Math.sqrt(dx * dx + dy * dy);
-
-                const r = imgData[idx * 4] / 255;
-                const g = imgData[idx * 4 + 1] / 255;
-                const b = imgData[idx * 4 + 2] / 255;
-                const dr = r - bg[0];
-                const dg = g - bg[1];
-                const db = b - bg[2];
-                diffFromBg[idx] = Math.sqrt(dr * dr + dg * dg + db * db);
             }
         }
 
         // 4. Run flood-fill mask simulation for each candidate threshold
-        const margin = 1;
         const candidates = [];
         for (let t = 0.30; t <= 0.98; t += 0.02) {
             candidates.push(t);
@@ -644,26 +630,13 @@ export class BalloonizeEngine {
             let qHead = 0;
             let qTail = 0;
 
-            // Seed queue with outer border margin pixels that qualify as background
+            // Seed queue unconditionally with absolute outer border pixels
             for (let y = 0; y < height; y++) {
                 for (let x = 0; x < width; x++) {
                     const idx = y * width + x;
-                    if (x <= margin || x >= width - margin || y <= margin || y >= height - margin) {
-                        let isBg = false;
-                        if (this.hasTransparency) {
-                            if (imgData[idx * 4 + 3] < 50) {
-                                isBg = true;
-                            }
-                        } else {
-                            if (diffFromBg[idx] < gpuThreshold * 1.5) {
-                                isBg = true;
-                            }
-                        }
-
-                        if (isBg) {
-                            visited[idx] = 1;
-                            queue[qTail++] = idx;
-                        }
+                    if (x === 0 || x === width - 1 || y === 0 || y === height - 1) {
+                        visited[idx] = 1;
+                        queue[qTail++] = idx;
                     }
                 }
             }
@@ -681,7 +654,7 @@ export class BalloonizeEngine {
 
                 for (let i = 0; i < neighbors.length; i++) {
                     const nIdx = neighbors[i];
-                    if (!visited[nIdx] && (grad[nIdx] < gpuThreshold || diffFromBg[nIdx] < gpuThreshold * 1.5)) {
+                    if (!visited[nIdx] && grad[nIdx] < gpuThreshold) {
                         visited[nIdx] = 1;
                         queue[qTail++] = nIdx;
                     }
@@ -746,12 +719,11 @@ export class BalloonizeEngine {
         this.hasTransparency = hasTransparency;
 
         // Compute average background color from the 1-pixel border margin
-        const margin = 1;
         let bgR = 0, bgG = 0, bgB = 0;
         let bgCount = 0;
         for (let y = 0; y < this.simRes; y++) {
             for (let x = 0; x < this.simRes; x++) {
-                if (x <= margin || x >= this.simRes - margin || y <= margin || y >= this.simRes - margin) {
+                if (x === 0 || x === this.simRes - 1 || y === 0 || y === this.simRes - 1) {
                     const idx = y * this.simRes + x;
                     bgR += imgData[idx * 4];
                     bgG += imgData[idx * 4 + 1];
@@ -779,8 +751,14 @@ export class BalloonizeEngine {
             const y = Math.floor(i / this.simRes);
             
             let mask = 0.0;
-            if (x > margin && x < this.simRes - margin && y > margin && y < this.simRes - margin) {
+            if (x > 0 && x < this.simRes - 1 && y > 0 && y < this.simRes - 1) {
                 mask = 1.0;
+                if (hasTransparency) {
+                    const imgIdx = y * this.simRes + x;
+                    if (imgData[imgIdx * 4 + 3] < 50) {
+                        mask = 0.0;
+                    }
+                }
             }
             
             initData[i*4 + 0] = 0; // u_t

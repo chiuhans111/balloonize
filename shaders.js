@@ -17,8 +17,6 @@ uniform vec2 u_texelSize;
 uniform vec2 u_imageTexelSize;
 uniform float u_gradientThreshold;
 uniform float u_hasTransparency;
-uniform float u_isCleanupPass;
-uniform vec3 u_bgColor;
 
 in vec2 v_uv;
 out vec4 fragColor;
@@ -34,15 +32,13 @@ void main() {
     }
 
     vec4 sourceImg = texture(u_imageTexture, v_uv);
-    
-    float diffFromBg = distance(sourceImg.rgb, u_bgColor);
 
-    // Compute luminance gradient with a 1.0 texel step to detect sharp borders
+    // Compute luminance gradient with a 2.0 texel step to filter high-frequency noise
     vec3 lumaCoef = vec3(0.299, 0.587, 0.114);
-    float l_l = dot(texture(u_imageTexture, v_uv + vec2(-u_texelSize.x, 0.0)).rgb, lumaCoef);
-    float l_r = dot(texture(u_imageTexture, v_uv + vec2( u_texelSize.x, 0.0)).rgb, lumaCoef);
-    float l_u = dot(texture(u_imageTexture, v_uv + vec2(0.0,  u_texelSize.y)).rgb, lumaCoef);
-    float l_d = dot(texture(u_imageTexture, v_uv + vec2(0.0, -u_texelSize.y)).rgb, lumaCoef);
+    float l_l = dot(texture(u_imageTexture, v_uv + vec2(-u_texelSize.x * 2.0, 0.0)).rgb, lumaCoef);
+    float l_r = dot(texture(u_imageTexture, v_uv + vec2( u_texelSize.x * 2.0, 0.0)).rgb, lumaCoef);
+    float l_u = dot(texture(u_imageTexture, v_uv + vec2(0.0,  u_texelSize.y * 2.0)).rgb, lumaCoef);
+    float l_d = dot(texture(u_imageTexture, v_uv + vec2(0.0, -u_texelSize.y * 2.0)).rgb, lumaCoef);
     
     float grad = length(vec2(l_l - l_r, l_d - l_u));
 
@@ -51,68 +47,23 @@ void main() {
     float m_u = texture(u_simState, v_uv + vec2(0.0,  u_texelSize.y)).b;
     float m_d = texture(u_simState, v_uv + vec2(0.0, -u_texelSize.y)).b;
 
-    // A neighbor is a valid background propagator only if its mask is 0.0 AND it matches background color/transparency
-    float isBg_l = 0.0;
-    if (m_l == 0.0) {
-        if (u_hasTransparency > 0.5) {
-            if (texture(u_imageTexture, v_uv + vec2(-u_texelSize.x, 0.0)).a < 0.1) isBg_l = 1.0;
-        } else {
-            vec3 col_l = texture(u_imageTexture, v_uv + vec2(-u_texelSize.x, 0.0)).rgb;
-            if (distance(col_l, u_bgColor) < u_gradientThreshold * 1.5) isBg_l = 1.0;
-        }
-    }
-
-    float isBg_r = 0.0;
-    if (m_r == 0.0) {
-        if (u_hasTransparency > 0.5) {
-            if (texture(u_imageTexture, v_uv + vec2(u_texelSize.x, 0.0)).a < 0.1) isBg_r = 1.0;
-        } else {
-            vec3 col_r = texture(u_imageTexture, v_uv + vec2(u_texelSize.x, 0.0)).rgb;
-            if (distance(col_r, u_bgColor) < u_gradientThreshold * 1.5) isBg_r = 1.0;
-        }
-    }
-
-    float isBg_u = 0.0;
-    if (m_u == 0.0) {
-        if (u_hasTransparency > 0.5) {
-            if (texture(u_imageTexture, v_uv + vec2(0.0, u_texelSize.y)).a < 0.1) isBg_u = 1.0;
-        } else {
-            vec3 col_u = texture(u_imageTexture, v_uv + vec2(0.0, u_texelSize.y)).rgb;
-            if (distance(col_u, u_bgColor) < u_gradientThreshold * 1.5) isBg_u = 1.0;
-        }
-    }
-
-    float isBg_d = 0.0;
-    if (m_d == 0.0) {
-        if (u_hasTransparency > 0.5) {
-            if (texture(u_imageTexture, v_uv + vec2(0.0, -u_texelSize.y)).a < 0.1) isBg_d = 1.0;
-        } else {
-            vec3 col_d = texture(u_imageTexture, v_uv + vec2(0.0, -u_texelSize.y)).rgb;
-            if (distance(col_d, u_bgColor) < u_gradientThreshold * 1.5) isBg_d = 1.0;
-        }
-    }
-
-    float edgeProximity = isBg_l + isBg_r + isBg_u + isBg_d;
+    // Check if we are currently on the outer edge of the mask
+    float edgeProximity = 4.0 - (m_l + m_r + m_u + m_d);
     
     if (edgeProximity > 0.0) {
-        // Trim isolated noise dots (morphological cleanup)
-        // Raise threshold to 2.0 during final cleanup passes to dissolve noise clusters and smooth edges
-        float trimThreshold = (u_isCleanupPass > 0.5) ? 2.0 : 1.0;
-        if (m_l + m_r + m_u + m_d <= trimThreshold) {
+        // Morphological Cleanup: instantly trim isolated background noise dots
+        if (m_l + m_r + m_u + m_d <= 1.0) {
             fragColor = vec4(0.0, 0.0, 0.0, 0.0);
             return;
         }
 
-        bool keepEating = false;
-        if (u_hasTransparency > 0.5) {
-            // PNG mode: trim based on transparency
-            keepEating = (sourceImg.a < 0.1);
-        } else {
-            // JPEG mode: trim smooth regions or colors close to background
-            keepEating = (grad < u_gradientThreshold) || (diffFromBg < u_gradientThreshold * 1.5);
-        }
+        // HYBRID STOPPING CONDITION:
+        // Keep eating the mask ONLY if we haven't hit the shape boundary.
+        // For transparent images (PNGs), stop instantly when hitting opaque pixels (alpha >= 0.1).
+        // For flattened images (JPEGs), fallback to the luminance gradient threshold.
+        bool keepEating = (u_hasTransparency > 0.5) ? (sourceImg.a < 0.1) : (grad < u_gradientThreshold);
         if (keepEating) {
-            fragColor = vec4(0.0, 0.0, 0.0, 0.0); 
+            fragColor = vec4(0.0, 0.0, 0.0, 0.0); // Trim this pixel out
             return;
         }
     }
