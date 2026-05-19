@@ -664,18 +664,18 @@ export class BalloonizeEngine {
             ratios.push((size - qTail) / size);
         }
 
-        // Find the plateau of minimal sensitivity, prioritizing mask sizes around 40-60% (closer to 60% preferred)
+        // Find the plateau of minimal sensitivity, prioritizing mask sizes around 40-60% (favoring 50%)
         let bestScore = Infinity;
         let bestThreshold = 0.75;
 
         for (let i = 1; i < candidates.length - 1; i++) {
             const ratio = ratios[i];
-            // Ignore completely empty or full masks
+            // Exclude extremely small (below 5%) or extremely large (above 95%) masks
             if (ratio >= 0.05 && ratio <= 0.95) {
                 const sensitivity = Math.abs(ratios[i + 1] - ratios[i - 1]);
                 
-                // Calculate penalty based on target range of 40% to 60% (preferring 60%)
-                let ratioPenalty = Math.abs(ratio - 0.60);
+                // Calculate penalty based on target range of 40% to 60% (favoring 50% at the center)
+                let ratioPenalty = Math.abs(ratio - 0.50);
                 if (ratio < 0.40) {
                     ratioPenalty += (0.40 - ratio) * 4.0; // Penalty grows for going below 40%
                 } else if (ratio > 0.60) {
