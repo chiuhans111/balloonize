@@ -357,6 +357,12 @@
             Tickle the balloon to see it wobble!
         </div>
 
+        <!-- Mask Tuning UI (Outside Panel) -->
+        <div class="control-group" style="margin-top: 15px; width: 100%;">
+            <label><span>Threshold</span> <span class="val-badge" id="val-mask-threshold">0.75</span></label>
+            <input type="range" id="slider-mask-threshold" min="0.0" max="1.0" step="0.01" value="0.75">
+        </div>
+
         <!-- Image Actions -->
         <div class="upload-section" style="margin-top: 10px; width: 100%; display: flex; gap: 10px;">
             <button class="btn-upload" id="btn-upload" style="flex: 1; margin: 0;">Open New Image</button>
@@ -419,38 +425,6 @@
                 <div class="control-group">
                     <label><span>Rim Light</span> <span class="val-badge" id="val-rim">0.5</span></label>
                     <input type="range" id="slider-rim" min="0.0" max="2.0" step="0.1" value="0.5">
-                </div>
-
-                <!-- Masking -->
-                <div class="section-title" style="margin-top: 6px;">Masking</div>
-                <div class="control-group">
-                    <label><span>Mask Threshold</span> <span class="val-badge" id="val-mask-threshold">0.05</span></label>
-                    <input type="range" id="slider-mask-threshold" min="0.0" max="0.5" step="0.005" value="0.05">
-                </div>
-
-                <!-- Diagnostics -->
-                <div class="section-title" style="margin-top: 10px;">Diagnostic Toggles</div>
-                <div class="control-group" style="display: flex; flex-direction: column; gap: 8px; padding-top: 4px; padding-bottom: 8px;">
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
-                        <input type="checkbox" id="chk-laplacian" checked style="cursor: pointer;">
-                        <span>Elastic Tension (Laplacian)</span>
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
-                        <input type="checkbox" id="chk-puff" checked style="cursor: pointer;">
-                        <span>Inflation Pressure (Puff)</span>
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
-                        <input type="checkbox" id="chk-pointer" checked style="cursor: pointer;">
-                        <span>Mouse Interaction Force</span>
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
-                        <input type="checkbox" id="chk-curvature" checked style="cursor: pointer;">
-                        <span>Curvature Penalty (Bending)</span>
-                    </label>
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;">
-                        <input type="checkbox" id="chk-diffusion" checked style="cursor: pointer;">
-                        <span>Low-pass Diffusion Filter</span>
-                    </label>
                 </div>
             </div>
         </div>

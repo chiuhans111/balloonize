@@ -16,6 +16,7 @@ precision highp float;
 uniform sampler2D u_imageTexture;
 uniform sampler2D u_simState;
 uniform vec2 u_texelSize;
+uniform vec2 u_imageTexelSize;
 uniform float u_gradientThreshold;
 uniform float u_hasTransparency;
 
@@ -35,11 +36,11 @@ void main() {
     // Fetch the actual source image pixel
     vec4 sourceImg = texture(u_imageTexture, v_uv);
 
-    // 1. Shrink-Wrap Erosion Logic
-    float l_left  = dot(texture(u_imageTexture, v_uv + vec2(-u_texelSize.x, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
-    float l_right = dot(texture(u_imageTexture, v_uv + vec2( u_texelSize.x, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
-    float l_up    = dot(texture(u_imageTexture, v_uv + vec2(0.0,  u_texelSize.y)).rgb, vec3(0.299, 0.587, 0.114));
-    float l_down  = dot(texture(u_imageTexture, v_uv + vec2(0.0, -u_texelSize.y)).rgb, vec3(0.299, 0.587, 0.114));
+    // 1. Shrink-Wrap Erosion Logic (sampled at simulation texel scale with 2x step for noise suppression)
+    float l_left  = dot(texture(u_imageTexture, v_uv + vec2(-u_texelSize.x * 2.0, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+    float l_right = dot(texture(u_imageTexture, v_uv + vec2( u_texelSize.x * 2.0, 0.0)).rgb, vec3(0.299, 0.587, 0.114));
+    float l_up    = dot(texture(u_imageTexture, v_uv + vec2(0.0,  u_texelSize.y * 2.0)).rgb, vec3(0.299, 0.587, 0.114));
+    float l_down  = dot(texture(u_imageTexture, v_uv + vec2(0.0, -u_texelSize.y * 2.0)).rgb, vec3(0.299, 0.587, 0.114));
     
     float grad = length(vec2(l_left - l_right, l_down - l_up));
 
@@ -52,6 +53,12 @@ void main() {
     float edgeProximity = 4.0 - (m_left + m_right + m_up + m_down);
     
     if (edgeProximity > 0.0) {
+        // Morphological Cleanup: instantly trim isolated background noise dots
+        if (m_left + m_right + m_up + m_down <= 1.0) {
+            fragColor = vec4(0.0, 0.0, 0.0, 0.0);
+            return;
+        }
+
         // HYBRID STOPPING CONDITION:
         // Keep eating the mask ONLY if we haven't hit the shape boundary.
         // For transparent images (PNGs), stop instantly when hitting opaque pixels (alpha >= 0.1).
@@ -154,8 +161,8 @@ void main() {
     float distToPointer = length(v_uv - u_pointerPos);
     if (distToPointer < brushRadius && abs(u_pointerForce) > 0.0) {
         float dentShape = smoothstep(brushRadius, 0.0, distToPointer);
-        // Softened impact to prevent violent energy injection
-        u_t_plus -= abs(u_pointerForce) * dentShape * mask * 0.8; 
+        dentShape = dentShape * dentShape; // Square for a much softer, cushioned spatial profile
+        u_t_plus -= abs(u_pointerForce) * dentShape * mask * 0.6; 
     }
 
     float plastic_limit = pow(sdf, 0.35) * 6.5; 
@@ -177,6 +184,7 @@ uniform vec3 u_lightDir;
 uniform float u_specCore;
 uniform float u_specGlow;
 uniform float u_rim;
+uniform float u_showBoundary;
 uniform float u_diffusion;
 uniform float u_inflationDepth;
 uniform float u_entranceProgress;
@@ -411,6 +419,35 @@ void main() {
     // Apply soft drop shadow to the background (diminishes as balloon flattens)
     float shadowIntensity = smoothstep(0.0, 0.12, length(bleedOffset)) * mask * currentInflation;
     bgColor = mix(bgColor, vec3(0.0), shadowIntensity * 0.45);
+    
+    // True selection contour (while dragging mask threshold slider)
+    if (u_showBoundary > 0.5) {
+        float m_center = rawState.b;
+        
+        // 1. Force the balloon to remain flat (original texture)
+        color = texColorRaw.rgb;
+        
+        // 2. Dim the outside of the mask (where m_center is 0.0) by 55%
+        float outsideMask = 1.0 - m_center;
+        bgColor = mix(bgColor, bgColor * 0.45, outsideMask);
+        
+        // 3. Draw a single, clean, sharp theme-colored contour line (1.2 texels)
+        float m_left   = texture(u_simState, v_uv + vec2(-u_simTexelSize.x * 1.2, 0.0)).b;
+        float m_right  = texture(u_simState, v_uv + vec2( u_simTexelSize.x * 1.2, 0.0)).b;
+        float m_up     = texture(u_simState, v_uv + vec2(0.0,  u_simTexelSize.y * 1.2)).b;
+        float m_down   = texture(u_simState, v_uv + vec2(0.0, -u_simTexelSize.y * 1.2)).b;
+        float edge = max(max(abs(m_center - m_left), abs(m_center - m_right)), max(abs(m_center - m_up), abs(m_center - m_down)));
+        
+        // Theme pink/coral color matching the app UI accent (#ff5e7b)
+        vec3 themeColor = vec3(1.0, 0.368, 0.482);
+        
+        // Overlay the contour cleanly on top
+        color = mix(color, themeColor, edge);
+        bgColor = mix(bgColor, themeColor, edge);
+    } else {
+        // Add the bright glowing scanner ring directly onto the balloon color (only when NOT dragging)
+        color += waveCol * ring * waveIntensity * smoothedSDF;
+    }
     
     fragColor = vec4(mix(bgColor, color, smoothedSDF), 1.0);
 }
