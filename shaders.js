@@ -181,6 +181,22 @@ float calcSeamDepth(vec2 uv, float sdf) {
     return -pow(edge, 1.5) * 0.15 * smoothstep(0.01, 0.06, sdf);
 }
 
+// Re-added Crease Function with randomized inward fade
+float getCreases(vec2 uv, float wave, float sdf, float mask, vec2 tangent) {
+    vec2 noiseOffset = vec2(sin(uv.y * 12.0 + wave), cos(uv.x * 12.0 - wave)) * 0.03;
+    vec2 perturbedUV = uv + noiseOffset;
+    
+    float crimpPhase = dot(perturbedUV * 75.0, tangent);
+    
+    // Randomized inward fade distance for organic look
+    float inwardFadeEnd = 0.12 + sin(uv.x * 15.0) * cos(uv.y * 15.0) * 0.05;
+    float buckleZone = smoothstep(inwardFadeEnd, 0.0, sdf) * smoothstep(-0.02, 0.02, sdf) * mask;
+    
+    float ridge = 1.0 - pow(abs(sin(crimpPhase + wave * 2.0)), 1.5);
+    
+    return (ridge * 2.0 - 1.0) * buckleZone * 0.10; // Stronger creases
+}
+
 void main() {
     vec4 state = sampleSmooth(u_simState, v_uv, u_simTexelSize);
     float mask = state.b; float sdf = state.a;
@@ -195,6 +211,7 @@ void main() {
     float wave = (state.r + st_left.r + st_right.r + st_up.r + st_down.r) * 0.2;
 
     vec2 slope_normal = normalize(vec2(st_left.a - st_right.a, st_down.a - st_up.a) + 0.0001);
+    vec2 tangent = vec2(-slope_normal.y, slope_normal.x);
     vec2 bleedOffset = slope_normal * clamp(wave * 2.0, -1.0, 1.0) * u_simTexelSize;
     vec2 warpedUV = v_uv - bleedOffset;
 
@@ -204,8 +221,13 @@ void main() {
     float h_up    = calcTotalDepth(st_up.r,    st_up.a)    + calcSeamDepth(warpedUV + vec2(0.0, u_simTexelSize.y), st_up.a);
     float h_down  = calcTotalDepth(st_down.r,  st_down.a)  + calcSeamDepth(warpedUV - vec2(0.0, u_simTexelSize.y), st_down.a);
     
-    float dZdx = (h_right - h_left) * 0.5; 
-    float dZdy = (h_up - h_down) * 0.5;
+    float c_left  = getCreases(v_uv - vec2(u_simTexelSize.x, 0.0), wave, sdf, mask, tangent);
+    float c_right = getCreases(v_uv + vec2(u_simTexelSize.x, 0.0), wave, sdf, mask, tangent);
+    float c_up    = getCreases(v_uv + vec2(0.0, u_simTexelSize.y), wave, sdf, mask, tangent);
+    float c_down  = getCreases(v_uv - vec2(0.0, u_simTexelSize.y), wave, sdf, mask, tangent);
+    
+    float dZdx = ((h_right - h_left) * 0.5) + ((c_right - c_left) * 0.5); 
+    float dZdy = ((h_up - h_down) * 0.5) + ((c_up - c_down) * 0.5);
     
     // Solid, highly inflated normal distribution
     vec3 normal = normalize(vec3(-dZdx, -dZdy, 0.25));
@@ -219,10 +241,14 @@ void main() {
     
     vec3 studioEnv = vec3(0.0);
     
-    // 1. Intense Starburst Point Light (Top-Left Position)
+    // 1. Soft 45-Degree Main Light (Dual-Glow: Soft Core + Broad Bloom)
     vec3 pointLightDir = normalize(vec3(-0.6, 0.6, 0.8));
-    float specPoint = pow(max(dot(refVec, pointLightDir), 0.0), 300.0);
-    studioEnv += vec3(12.0, 11.0, 10.0) * specPoint;
+    float h_dot_l = max(dot(refVec, pointLightDir), 0.0);
+    
+    float specPointCore = pow(h_dot_l, 150.0) * 3.0;   // Softened core reflection
+    float specPointGlow = pow(h_dot_l, 24.0) * 0.8;    // Broad soft gloss bloom scattering
+    float specPoint = specPointCore; // Pass core intensity for additive bloom below
+    studioEnv += vec3(1.0, 0.95, 0.9) * (specPointCore + specPointGlow);
     
     // 2. Main Softbox Panel Reflection (Top-Right Angle)
     float softbox1 = smoothstep(0.7, 0.95, dot(refVec, normalize(vec3(0.7, 0.5, 0.4))));
@@ -249,7 +275,7 @@ void main() {
     color = mix(color, studioEnv, fresnel);
     
     // Add direct specular light bloom back onto the mesh surface for visual pop
-    color += vec3(5.0) * specPoint * albedo;
+    color += vec3(2.0) * specPoint * albedo;
 
     color = linearToSrgb(acesFilm(color));
 
