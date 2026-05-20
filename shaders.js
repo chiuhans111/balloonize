@@ -17,6 +17,7 @@ uniform vec2 u_texelSize;
 uniform vec2 u_imageTexelSize;
 uniform float u_gradientThreshold;
 uniform float u_hasTransparency;
+uniform float u_isCleanupPass;
 
 in vec2 v_uv;
 out vec4 fragColor;
@@ -52,7 +53,9 @@ void main() {
     
     if (edgeProximity > 0.0) {
         // Morphological Cleanup: instantly trim isolated background noise dots
-        if (m_l + m_r + m_u + m_d <= 1.0) {
+        // Raise threshold to 2.0 during final cleanup passes to dissolve noise clusters and smooth edges
+        float trimThreshold = (u_isCleanupPass > 0.5) ? 2.0 : 1.0;
+        if (m_l + m_r + m_u + m_d <= trimThreshold) {
             fragColor = vec4(0.0, 0.0, 0.0, 0.0);
             return;
         }
@@ -337,8 +340,8 @@ void main() {
     float c_u = getCreases(v_uv + vec2(0.0, u_simTexelSize.y), wave, sdf, mask, tangent);
     float c_d = getCreases(v_uv - vec2(0.0, u_simTexelSize.y), wave, sdf, mask, tangent);
 
-    float dZdx = dZdx_macro + dZdx_seam + (((c_r - c_l) * 0.5) / u_simTexelSize.x); 
-    float dZdy = dZdy_macro + dZdy_seam + (((c_u - c_d) * 0.5) / u_simTexelSize.y);
+    float dZdx = (dZdx_macro + dZdx_seam + (((c_r - c_l) * 0.5) / u_simTexelSize.x)) * 0.5; 
+    float dZdy = (dZdy_macro + dZdy_seam + (((c_u - c_d) * 0.5) / u_simTexelSize.y)) * 0.5;
     
     vec3 normal = normalize(vec3(-dZdx, -dZdy, 28.0));
     

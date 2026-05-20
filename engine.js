@@ -459,13 +459,15 @@ export class BalloonizeEngine {
 
         // Run 150 passes to erode mask inward to shape boundaries and build SDF
         for (let i = 0; i < 150; i++) {
+            const isCleanup = (i >= 147) ? 1.0 : 0.0;
             this.runPass(this.trimProgram, this.fboB, {
                 u_imageTexture: this.imageTex,
                 u_simState: this.simA,
                 u_texelSize: [1.0 / this.simRes, 1.0 / this.simRes],
                 u_imageTexelSize: [1.0 / this.loadedImage.width, 1.0 / this.loadedImage.height],
                 u_gradientThreshold: gpuThreshold,
-                u_hasTransparency: this.hasTransparency ? 1.0 : 0.0
+                u_hasTransparency: this.hasTransparency ? 1.0 : 0.0,
+                u_isCleanupPass: isCleanup
             });
             this.swapPingPong();
         }
