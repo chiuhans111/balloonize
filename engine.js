@@ -210,6 +210,7 @@ export class BalloonizeEngine {
         const slSpecCore = document.getElementById('slider-spec-core');
         const slSpecGlow = document.getElementById('slider-spec-glow');
         const slRim = document.getElementById('slider-rim');
+        const slInflationDepth = document.getElementById('slider-inflation-depth');
         
         if (slTension) {
             slTension.value = this.physicsParams.tension;
@@ -217,6 +218,7 @@ export class BalloonizeEngine {
             slDiffusion.value = this.physicsParams.diffusion;
             
             if (slMaskThreshold) slMaskThreshold.value = this.maskThreshold;
+            if (slInflationDepth) slInflationDepth.value = this.inflationDepth;
 
             slEnv.value = this.lightingParams.env;
             slAz.value = this.lightingParams.az;
@@ -238,11 +240,13 @@ export class BalloonizeEngine {
                 this.lightingParams.specCore = parseFloat(slSpecCore.value);
                 this.lightingParams.specGlow = parseFloat(slSpecGlow.value);
                 this.lightingParams.rim = parseFloat(slRim.value);
+                if (slInflationDepth) this.inflationDepth = parseFloat(slInflationDepth.value);
 
                 const elT = document.getElementById('val-tension');
                 const elD = document.getElementById('val-damping');
                 const elDi = document.getElementById('val-diffusion');
                 const elMT = document.getElementById('val-mask-threshold');
+                const elID = document.getElementById('val-inflation-depth');
                 
                 const elE = document.getElementById('val-env');
                 const elAz = document.getElementById('val-azimuth');
@@ -255,6 +259,7 @@ export class BalloonizeEngine {
                 if (elD) elD.innerText = this.physicsParams.damping.toFixed(2);
                 if (elDi) elDi.innerText = this.physicsParams.diffusion.toFixed(2);
                 if (elMT) elMT.innerText = this.maskThreshold.toFixed(2);
+                if (elID) elID.innerText = this.inflationDepth.toFixed(2);
                 
                 if (elE) elE.innerText = this.lightingParams.env.toFixed(1);
                 if (elAz) elAz.innerText = this.lightingParams.az.toFixed(0);
@@ -269,6 +274,7 @@ export class BalloonizeEngine {
             slTension.addEventListener('input', updateParams);
             slDamping.addEventListener('input', updateParams);
             slDiffusion.addEventListener('input', updateParams);
+            if (slInflationDepth) slInflationDepth.addEventListener('input', updateParams);
             
             if (slMaskThreshold) {
                 slMaskThreshold.addEventListener('input', () => {
@@ -356,6 +362,7 @@ export class BalloonizeEngine {
             const slSpecCore = document.getElementById('slider-spec-core');
             const slSpecGlow = document.getElementById('slider-spec-glow');
             const slRim = document.getElementById('slider-rim');
+            const slInflationDepth = document.getElementById('slider-inflation-depth');
             
             if (slTension) {
                 slTension.removeEventListener('input', this.boundUpdateParams);
@@ -367,6 +374,7 @@ export class BalloonizeEngine {
                 slSpecCore.removeEventListener('input', this.boundUpdateParams);
                 slSpecGlow.removeEventListener('input', this.boundUpdateParams);
                 slRim.removeEventListener('input', this.boundUpdateParams);
+                if (slInflationDepth) slInflationDepth.removeEventListener('input', this.boundUpdateParams);
             }
         }
 
@@ -479,8 +487,7 @@ export class BalloonizeEngine {
             u_simState: this.simA,
             u_texelSize: [1.0 / this.simRes, 1.0 / this.simRes],
             u_pointerPos: [0.0, 0.0],
-            u_pointerForce: 0.0,
-            u_pressure: 0.0
+            u_pointerForce: 0.0
         });
         
         this.renderComposite();
@@ -494,10 +501,8 @@ export class BalloonizeEngine {
     }
 
     loop() {
-        let currentPressure = 0.05;
         if (this.entranceProgress < 1.0) {
             this.entranceProgress = Math.min(1.0, this.entranceProgress + 0.0125);
-            currentPressure = 0.05 * this.entranceProgress;
             this.consecutiveIdleFrames = 0; // Keep awake during transition
         }
 
@@ -509,8 +514,7 @@ export class BalloonizeEngine {
             u_pointerForce: this.pointerForce,
             u_tension: this.physicsParams ? this.physicsParams.tension : 0.5,
             u_damping: this.physicsParams ? this.physicsParams.damping : 0.75,
-            u_diffusion: this.physicsParams ? this.physicsParams.diffusion : 0.15,
-            u_pressure: currentPressure
+            u_diffusion: this.physicsParams ? this.physicsParams.diffusion : 0.15
         });
 
         if (this.isInteracting) {

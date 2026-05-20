@@ -37,13 +37,12 @@ To shape the flat image into a balloon, a trim pass runs 150 times when an image
 * **Eikonal Rouy-Tourin SDF Solver**: Computes a smooth Euclidean Signed Distance Field (SDF) directly on the GPU, avoiding the faceted appearance of 8-way Chamfer solvers and creating high-quality rounded corners.
 
 ### 2. Elastic Physics Wave Solver (Wave Pass)
-Simulates realistic material tension, damping, and inflation pressure on a 256x256 simulation grid:
+Simulates realistic material tension and damping on a 256x256 simulation grid:
 * **Displacement**: Calculated using the wave equation:
-  $$\text{Acceleration} = (\text{Tension})^2 \times \text{Laplacian} + \text{Pressure}$$
-* **Inflation Pressure**:
-  * During the entrance animation (`entranceProgress < 1.0`), pressure ramps linearly up to `0.05` (step rate of `0.0125` per frame).
-  * Once fully inflated, it holds a constant baseline pressure of `0.05`.
-  * The deprecated transient "Puff!" parameter was removed to maintain clean, stable inflation.
+  $$\text{Acceleration} = (\text{Tension})^2 \times \text{Laplacian}$$
+* **Stability & Damping**:
+  * Enforces the 2D CFL stability condition ($c \le 1/\sqrt{2} \approx 0.7071$).
+  * Employs Gaussian curvature regularization to damp out high-frequency noise and maintain material integrity during interactions.
 
 ### 3. Glassmorphic Mylar Optics (Composite Pass)
 Combines displacement, normal maps, and lighting calculations:

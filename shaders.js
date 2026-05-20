@@ -104,7 +104,6 @@ uniform float u_pointerForce;
 uniform float u_tension;
 uniform float u_damping;
 uniform float u_diffusion;
-uniform float u_pressure;
 
 in vec2 v_uv;
 out vec4 fragColor;
@@ -142,7 +141,6 @@ void main() {
     float developablePenalty = clamp(abs(K) * 400.0, 0.0, 0.15);
     
     float tension = u_tension * mask; 
-    float pressure = u_pressure * mask;      
     // Scale down damping near the boundary (low SDF) to absorb wave energy at the sides
     float boundaryFade = smoothstep(0.0, 0.08, sdf);
     float damping = u_damping - developablePenalty;
@@ -150,7 +148,7 @@ void main() {
     
     // Enforce 2D CFL stability condition: wave speed must be <= 1.0 / sqrt(2.0) ≈ 0.7071
     float c = tension * 0.7071;
-    float acceleration = (c * c) * laplacian + pressure;
+    float acceleration = (c * c) * laplacian;
     float u_t_plus = 2.0 * u_t - u_t_minus + acceleration;
     
     // Low-pass filter for numerical stability
@@ -244,7 +242,10 @@ float getCreases(vec2 uv, float wave, float sdf, float mask, vec2 tangent) {
 
 float calcTotalDepth(float wave, float sdf) {
     float baseInflation = 2.2; 
-    return (wave + pow(max(sdf, 0.0), 0.65) * baseInflation) * u_inflationDepth * u_entranceProgress;
+    float s = max(sdf, 0.0);
+    // Spherical cap approximation: rises steeply from the edge and rounds out smoothly towards the peak.
+    float dome = sqrt(s) * (baseInflation - s * 1.2);
+    return (wave + dome) * u_inflationDepth * u_entranceProgress;
 }
 
 // Compute depth offsets along image high-contrast seams
