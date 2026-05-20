@@ -380,7 +380,7 @@ void main() {
     float currentInflation = u_inflationDepth * u_entranceProgress;
     color = mix(texColorRaw.rgb, color, currentInflation);
 
-    float smoothedSDF = smoothstep(0.0, 0.06, sharpSDF);
+    float smoothedSDF = smoothstep(0.0, u_screenTexelSize.x * 6.0, sharpSDF);
     
     // Background composition
     vec3 pageBg = vec3(0.051, 0.051, 0.067);
@@ -414,11 +414,7 @@ void main() {
     waveCol = mix(waveCol, waveColor3, cos(dist * 4.0 + u_entranceProgress * 3.0) * 0.5 + 0.5);
     
     float waveFade = 1.0 - smoothstep(0.0, 1.0, u_entranceProgress);
-    float waveIntensity = 0.9 * waveFade * u_inflationDepth; 
-    
-    // Apply drop shadow
-    float shadowIntensity = smoothstep(0.0, 0.12, length(bleedOffset)) * mask * currentInflation;
-    bgColor = mix(bgColor, vec3(0.0), shadowIntensity * 0.45);
+    float waveIntensity = 0.9 * waveFade * u_inflationDepth;
     
     // Mask boundary visualization (during threshold adjustment)
     if (u_showBoundary > 0.5) {

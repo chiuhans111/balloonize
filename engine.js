@@ -170,7 +170,7 @@ export class BalloonizeEngine {
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
                 gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 
-                const maxCanvasDim = 768;
+                const maxCanvasDim = 512;
                 const aspect = img.width / img.height;
                 if (aspect >= 1.0) {
                     this.canvas.width = maxCanvasDim;
